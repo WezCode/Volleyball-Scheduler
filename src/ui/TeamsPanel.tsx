@@ -29,6 +29,23 @@ export function TeamsPanel(props: {
     return entries;
   }, [teamsByDivision]);
 
+  // Default to first division (e.g. "D0") — NOT "All"
+  const [activeDiv, setActiveDiv] = React.useState<string>(() => divisions[0]?.[0] ?? "ALL");
+
+  // Keep activeDiv valid if divisions change dynamically
+  React.useEffect(() => {
+    if (activeDiv === "ALL") return;
+    const divs = new Set(divisions.map(([d]) => d));
+    if (!divs.has(activeDiv)) {
+      setActiveDiv(divisions[0]?.[0] ?? "ALL");
+    }
+  }, [divisions, activeDiv]);
+
+  const tabItems = React.useMemo(() => {
+    const divKeys = divisions.map(([d]) => d);
+    return [...divKeys, "ALL"]; // ✅ All last
+  }, [divisions]);
+
   const toggle = (arr: string[], value: string) =>
     arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value];
 
@@ -48,10 +65,30 @@ export function TeamsPanel(props: {
     );
   };
 
+  const visibleDivisions =
+  activeDiv === "ALL" ? divisions : divisions.filter(([div]) => div === activeDiv);
+
   return (
     <div className="mt-4 rounded-2xl border border-gray-200 bg-white overflow-hidden">
       <div className="p-4 border-b border-gray-200">
         <div className="text-sm font-medium">Teams</div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {tabItems.map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setActiveDiv(key)}
+              className={`rounded-lg border px-3 py-2 text-xs ${
+                activeDiv === key
+                  ? "bg-black text-white border-black"
+                  : "bg-white border-gray-300 hover:bg-gray-50"
+              }`}
+              title={key === "ALL" ? "Show all divisions" : `Show ${key}`}
+            >
+              {key === "ALL" ? "All" : key}
+            </button>
+          ))}
+        </div>
         <div className="text-xs text-gray-600">
           Edit names here. Team IDs stay stable for scheduling & clashes. Time preferences are soft constraints.
         </div>
@@ -72,7 +109,7 @@ export function TeamsPanel(props: {
             </thead>
 
             <tbody>
-              {divisions.map(([div, ids]) => (
+              {visibleDivisions.map(([div, ids]) => (
                 <React.Fragment key={div}>
                   {ids.map((id, i) => {
                     const pref = teamTimePrefs[id]?.preferred || [];
