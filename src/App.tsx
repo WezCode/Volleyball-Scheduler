@@ -154,7 +154,7 @@ export default function App() {
   ]);
 
   const [schedule, setSchedule] = useState<Match[]>([]);
-  const [previewTab, setPreviewTab] = useState<"division" | "csv" | "grouped">(
+  const [previewTab, setPreviewTab] = useState<"division" | "netheights">(
     "division"
   );
   const [mainTab, setMainTab] = useState<"config" | "teams" | "preview">(
@@ -290,6 +290,7 @@ export default function App() {
               teamsByDivision={teamsByDivision}
               displayName={displayName}
               groupedByWeek={groupedByWeek}
+              timeslots={parsedTimeslots}
             />
           )}
 
