@@ -9,12 +9,13 @@ export const DEFAULT_VENUES: Venue[] = [
   { name: "DCC", courts: ["DC1", "DC2"] },
 ];
 
-export const DEFAULT_DIVISIONS: Division[] = [
-  { code: "D0", teams: 9 },
-  { code: "D1", teams: 9 },
-  { code: "D1R", teams: 11 },
-  { code: "D2", teams: 15 },
-  { code: "D3", teams: 9 },
+// example shape — keep your existing codes/teams, just add netHeightM
+export const DEFAULT_DIVISIONS = [
+  { code: "D0",  teams: 9, netHeightM: 2.43 },
+  { code: "D1",  teams: 9, netHeightM: 2.43 },
+  { code: "D1R", teams: 11, netHeightM: 2.43 },
+  { code: "D2",  teams: 15, netHeightM: 2.35 },
+  { code: "D3",  teams: 9, netHeightM: 2.24 },
 ];
 
 export const DEFAULT_CLASH_ROWS: ClashRow[] = [{ teams: [] }];

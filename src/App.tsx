@@ -77,6 +77,7 @@ export default function App() {
     for (const d of divisions) {
       if (!d.code || !String(d.code).trim()) errs.push("Division code missing.");
       if (Number(d.teams) <= 0) errs.push(`Division ${d.code || "?"}: team count must be > 0`);
+      if (!Number.isFinite(d.netHeightM) || d.netHeightM <= 0) errs.push(`Division ${d.code || "?"}: net height must be a valid number`);
     }
 
     for (const v of venues) {

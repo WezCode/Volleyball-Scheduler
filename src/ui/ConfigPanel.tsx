@@ -251,12 +251,15 @@ export function ConfigPanel(props: {
             <div className="text-sm font-medium">Divisions</div>
             <button
               className="text-xs rounded-lg border border-gray-300 px-2 py-1 hover:bg-gray-50"
-              onClick={() => setDivisions([...divisions, { code: "", teams: 1 }])}
+              onClick={() => setDivisions([...divisions, { code: "", teams: 1, netHeightM: 2.43 }])}
             >
               + Add
             </button>
           </div>
           <div className="mt-2 space-y-2">
+          <div className="mt-2 text-xs text-gray-600">
+            Net height is per division (meters).
+          </div>
             {divisions.map((d, idx) => (
               <div key={idx} className="flex gap-2">
                 <input
@@ -270,7 +273,7 @@ export function ConfigPanel(props: {
                   placeholder="D1R"
                 />
                 <input
-                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  className="w-20 rounded-lg border border-gray-300 px-3 py-2 text-sm"
                   type="number"
                   min={1}
                   value={d.teams}
@@ -279,6 +282,22 @@ export function ConfigPanel(props: {
                     next[idx] = { ...next[idx], teams: Number(e.target.value) };
                     setDivisions(next);
                   }}
+                />
+
+                <input
+                  className="w-28 rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
+                  type="number"
+                  step="0.01"
+                  min={2.0}
+                  max={2.6}
+                  value={d.netHeightM ?? 2.43}
+                  onChange={(e) => {
+                    const next = divisions.slice();
+                    next[idx] = { ...next[idx], netHeightM: Number(e.target.value) };
+                    setDivisions(next);
+                  }}
+                  title="Net height in meters"
+                  placeholder="2.43"
                 />
                 <button
                   className="w-10 rounded-lg border border-gray-300 text-sm hover:bg-gray-50"

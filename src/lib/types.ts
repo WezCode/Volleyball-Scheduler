@@ -1,4 +1,8 @@
-export type Division = { code: string; teams: number };
+export type Division = {
+  code: string;
+  teams: number;
+  netHeightM: number; // ✅ new
+};
 
 export type Venue = { name: string; courts: string[] };
 
