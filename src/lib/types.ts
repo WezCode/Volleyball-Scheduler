@@ -39,3 +39,11 @@ export type DivisionGrid = {
 };
 
 export type DivisionStats = { games: number; byes: number; unassigned: number };
+
+export type TeamTimePrefs = Record<
+  string,
+  {
+    preferred?: string[];
+    avoid?: string[];
+  }
+>;

@@ -1,5 +1,5 @@
 import React from "react";
-import type { ClashRow, Division, Venue } from "../lib/types";
+import type { ClashRow, Division, Venue, TeamTimePrefs} from "../lib/types";
 
 export function ConfigPanel(props: {
   weeks: number;
@@ -16,6 +16,9 @@ export function ConfigPanel(props: {
 
   clashRows: ClashRow[];
   setClashRows: (x: ClashRow[]) => void;
+
+  teamTimePrefs: TeamTimePrefs;
+  setTeamTimePrefs: React.Dispatch<React.SetStateAction<TeamTimePrefs>>;
 
   teams: string[];
   displayName: (id: string) => string;
@@ -47,6 +50,8 @@ export function ConfigPanel(props: {
     setDivisions,
     clashRows,
     setClashRows,
+    teamTimePrefs,
+    setTeamTimePrefs,
     teams,
     displayName,
     clashesCsv,
@@ -61,6 +66,37 @@ export function ConfigPanel(props: {
     totalCourts,
     parsedTimeslotsCount,
   } = props;
+
+  const teamsByDivision = React.useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const t of teams || []) {
+      const div = String(t).split("-")[0] || "Other";
+      if (!map.has(div)) map.set(div, []);
+      map.get(div)!.push(t);
+    }
+    const entries = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+    for (const [, arr] of entries) arr.sort((a, b) => a.localeCompare(b));
+    return entries;
+  }, [teams]);
+  
+  const [prefTeam, setPrefTeam] = React.useState<string>("");
+  
+  React.useEffect(() => {
+    // prune prefs when timeslots change
+    const allowed = new Set((timeslotsArr || []).map((t) => t.trim()).filter(Boolean));
+    setTeamTimePrefs((prev) => {
+      const next: TeamTimePrefs = {};
+      for (const [teamId, cfg] of Object.entries(prev || {})) {
+        const preferred = (cfg.preferred || []).filter((t) => allowed.has(t));
+        const avoid = (cfg.avoid || []).filter((t) => allowed.has(t));
+        if (preferred.length || avoid.length) next[teamId] = { preferred, avoid };
+      }
+      return next;
+    });
+  }, [timeslotsArr, setTeamTimePrefs]);
+
+  const toggle = (arr: string[], value: string) =>
+  arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value];
 
   return (
     <>
@@ -260,9 +296,10 @@ export function ConfigPanel(props: {
           </div>
         </div>
       </div>
-
       <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* LEFT: Clashes */}
         <div className="rounded-xl border border-gray-200 p-4">
+          {/* --- KEEP your existing Clashes card contents EXACTLY here --- */}
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium">Clashes</div>
             <div className="text-xs text-gray-600">Edges: {clashesCount}</div>
@@ -298,39 +335,39 @@ export function ConfigPanel(props: {
                       className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
                       value={row.pending || ""}
                       onChange={(e) => {
-                        const next = clashRows.slice();
-                        next[rowIdx] = { ...next[rowIdx], pending: e.target.value };
-                        setClashRows(next);
-                      }}
-                    >
-                      <option value="">Select a team…</option>
-                      {teams.map((t) => (
-                        <option key={t} value={t} disabled={selected.includes(t)}>
-                          {displayName(t)}
-                        </option>
-                      ))}
-                    </select>
+                        const team = e.target.value;
+                        if (!team) return;
 
-                    <button
-                      className={`rounded-lg px-3 py-2 text-sm border ${
-                        row.pending && !selected.includes(row.pending)
-                          ? "bg-white border-gray-300 hover:bg-gray-50"
-                          : "bg-gray-100 text-gray-400 border-gray-200"
-                      }`}
-                      disabled={!row.pending || selected.includes(row.pending)}
-                      onClick={() => {
-                        const team = row.pending;
-                        if (!team || selected.includes(team)) return;
+                        if (selected.includes(team)) {
+                          const next = clashRows.slice();
+                          next[rowIdx] = { ...next[rowIdx], pending: "" };
+                          setClashRows(next);
+                          return;
+                        }
+
                         const next = clashRows.slice();
                         next[rowIdx] = { ...next[rowIdx], teams: [...selected, team], pending: "" };
                         setClashRows(next);
                       }}
                     >
-                      + Add team
-                    </button>
+                      <option value="">Select a team…</option>
+                      {teamsByDivision.map(([div, ts]) => (
+                        <optgroup key={div} label={div}>
+                          {ts.map((t) => (
+                            <option key={t} value={t} disabled={selected.includes(t)}>
+                              {displayName(t)}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
                   </div>
 
-                  {hasDup && <div className="mt-2 text-xs text-red-700">Duplicate team in this row — remove duplicates.</div>}
+                  {hasDup && (
+                    <div className="mt-2 text-xs text-red-700">
+                      Duplicate team in this row — remove duplicates.
+                    </div>
+                  )}
 
                   <div className="mt-2 flex flex-wrap gap-2">
                     {selected.length === 0 ? (
@@ -361,7 +398,9 @@ export function ConfigPanel(props: {
 
                   <div className="mt-2 text-xs text-gray-600">
                     This row generates:{" "}
-                    <span className="font-medium">{Math.max(0, (selected.length * (selected.length - 1)) / 2)}</span>{" "}
+                    <span className="font-medium">
+                      {Math.max(0, (selected.length * (selected.length - 1)) / 2)}
+                    </span>{" "}
                     clash edges
                   </div>
                 </div>
@@ -385,56 +424,71 @@ export function ConfigPanel(props: {
             />
           </details>
 
-          <div className="mt-2 text-xs text-gray-600">Rule (later): clashing teams must not share the same timeslot.</div>
+          <div className="mt-2 text-xs text-gray-600">
+            Rule (later): clashing teams must not share the same timeslot.
+          </div>
         </div>
 
-        <div className="rounded-xl border border-gray-200 p-4">
-          <div className="text-sm font-medium">Validation</div>
-          <div className="mt-2 space-y-2">
-            {validationErrs.length > 0 ? (
-              <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
-                <div className="font-medium">Fix these:</div>
-                <ul className="mt-1 list-disc pl-5">
-                  {validationErrs.map((e, i) => (
-                    <li key={i}>{e}</li>
-                  ))}
-                </ul>
+        {/* RIGHT: stack Preferences + Validation */}
+        <div className="space-y-4">
+
+
+          {/* Validation (keep your existing validation card contents here) */}
+          <div className="rounded-xl border border-gray-200 p-4">
+            {/* --- paste your existing Validation card exactly as-is --- */}
+            <div className="text-sm font-medium">Validation</div>
+            <div className="mt-2 space-y-2">
+              {validationErrs.length > 0 ? (
+                <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+                  <div className="font-medium">Fix these:</div>
+                  <ul className="mt-1 list-disc pl-5">
+                    {validationErrs.map((e, i) => (
+                      <li key={i}>{e}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-800">
+                  Looks good.
+                </div>
+              )}
+
+              <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-xs text-gray-700 space-y-1">
+                {validationInfos.map((x, i) => (
+                  <div key={i}>{x}</div>
+                ))}
               </div>
-            ) : (
-              <div className="rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-800">Looks good.</div>
-            )}
 
-            <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-xs text-gray-700 space-y-1">
-              {validationInfos.map((x, i) => (
-                <div key={i}>{x}</div>
-              ))}
-            </div>
+              <div className="flex gap-2 mt-2 flex-wrap">
+                <button
+                  className={`rounded-lg px-3 py-2 text-sm border ${
+                    canGenerate
+                      ? "bg-black text-white border-black hover:opacity-90"
+                      : "bg-gray-100 text-gray-400 border-gray-200"
+                  }`}
+                  disabled={!canGenerate}
+                  onClick={onGenerate}
+                >
+                  Generate 5-week pairings
+                </button>
 
-            <div className="flex gap-2 mt-2 flex-wrap">
-              <button
-                className={`rounded-lg px-3 py-2 text-sm border ${
-                  canGenerate ? "bg-black text-white border-black hover:opacity-90" : "bg-gray-100 text-gray-400 border-gray-200"
-                }`}
-                disabled={!canGenerate}
-                onClick={onGenerate}
-              >
-                Generate 5-week pairings
-              </button>
+                <button
+                  className={`rounded-lg px-3 py-2 text-sm border ${
+                    canDownload
+                      ? "bg-white border-gray-300 hover:bg-gray-50"
+                      : "bg-gray-100 text-gray-400 border-gray-200"
+                  }`}
+                  disabled={!canDownload}
+                  onClick={onDownload}
+                >
+                  Download CSV
+                </button>
+              </div>
 
-              <button
-                className={`rounded-lg px-3 py-2 text-sm border ${
-                  canDownload ? "bg-white border-gray-300 hover:bg-gray-50" : "bg-gray-100 text-gray-400 border-gray-200"
-                }`}
-                disabled={!canDownload}
-                onClick={onDownload}
-              >
-                Download CSV
-              </button>
-            </div>
-
-            <div className="text-xs text-gray-600">
-              Capacity per week: <span className="font-medium">{totalCourts}</span> courts ×{" "}
-              <span className="font-medium">{parsedTimeslotsCount}</span> timeslots
+              <div className="text-xs text-gray-600">
+                Capacity per week: <span className="font-medium">{totalCourts}</span> courts ×{" "}
+                <span className="font-medium">{parsedTimeslotsCount}</span> timeslots
+              </div>
             </div>
           </div>
         </div>

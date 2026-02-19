@@ -19,6 +19,7 @@ export default function App() {
   const [divisions, setDivisions] = useState(DEFAULT_DIVISIONS);
   const [clashRows, setClashRows] = useState(DEFAULT_CLASH_ROWS);
   const [teamNames, setTeamNames] = useState<Record<string, string>>({});
+  const [teamTimePrefs, setTeamTimePrefs] = React.useState<Record<string, { preferred?: string[]; avoid?: string[] }>>({});
 
   const parsedTimeslots = useMemo(
     () => (timeslotsArr || []).map((s) => String(s || "").trim()).filter(Boolean),
@@ -105,6 +106,7 @@ export default function App() {
   const [schedule, setSchedule] = useState<Match[]>([]);
   const [previewTab, setPreviewTab] = useState<"division" | "csv" | "grouped">("division");
   const [mainTab, setMainTab] = useState<"config" | "teams" | "preview">("config");
+  
 
   const teamsByDivision = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -173,6 +175,8 @@ export default function App() {
               setDivisions={setDivisions}
               clashRows={clashRows}
               setClashRows={setClashRows}
+              teamTimePrefs={teamTimePrefs}
+              setTeamTimePrefs={setTeamTimePrefs}
               teams={teams}
               displayName={displayName}
               clashesCsv={clashesCsv}
@@ -196,7 +200,15 @@ export default function App() {
           )}
 
           {mainTab === "teams" && (
-            <TeamsPanel teamsByDivision={teamsByDivision} teamNames={teamNames} setTeamNames={setTeamNames} />
+            <TeamsPanel
+              teamsByDivision={teamsByDivision}
+              teamNames={teamNames}
+              setTeamNames={setTeamNames}
+              displayName={displayName}
+              timeslots={parsedTimeslots}          // or timeslotsArr, but parsed is cleaner
+              teamTimePrefs={teamTimePrefs}
+              setTeamTimePrefs={setTeamTimePrefs}
+            />
           )}
 
           {mainTab === "preview" && schedule.length > 0 && (
