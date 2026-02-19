@@ -1,0 +1,1 @@
+export default function App() { return ( <div style={{ padding: 20, fontFamily: "sans-serif" }}> <h1>Volleyball Scheduler</h1> <p>App is deploying...</p> </div> ); }
