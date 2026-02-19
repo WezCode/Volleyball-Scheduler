@@ -1,11 +1,22 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { DEFAULT_CLASH_ROWS, DEFAULT_DIVISIONS, DEFAULT_TIMESLOTS, DEFAULT_VENUES, DEFAULT_WEEKS } from "./config/defaults";
+import {
+  DEFAULT_CLASH_ROWS,
+  DEFAULT_DIVISIONS,
+  DEFAULT_TIMESLOTS,
+  DEFAULT_VENUES,
+  DEFAULT_WEEKS,
+} from "./config/defaults";
 import { PRESET_TEAM_NAMES } from "./data/presetTeamNames";
 import { buildEdgesFromRows, edgesToCsv } from "./lib/clashes";
 import { downloadCsv } from "./lib/csv";
 import { buildTeams } from "./lib/ids";
 import { buildSlotRowsAll } from "./lib/slots";
-import { buildDivisionGrid, buildDivisionStats, generatePairings, placeMatches } from "./lib/scheduling";
+import {
+  buildDivisionGrid,
+  buildDivisionStats,
+  generatePairings,
+  placeMatches,
+} from "./lib/scheduling";
 import type { Match } from "./lib/types";
 import { Tabs } from "./ui/Tabs";
 import { ConfigPanel } from "./ui/ConfigPanel";
@@ -19,21 +30,34 @@ export default function App() {
   const [divisions, setDivisions] = useState(DEFAULT_DIVISIONS);
   const [clashRows, setClashRows] = useState(DEFAULT_CLASH_ROWS);
   const [teamNames, setTeamNames] = useState<Record<string, string>>({});
-  const [teamTimePrefs, setTeamTimePrefs] = React.useState<Record<string, { preferred?: string[]; avoid?: string[] }>>({});
+  const [teamTimePrefs, setTeamTimePrefs] = React.useState<
+    Record<string, { preferred?: string[]; avoid?: string[] }>
+  >({});
 
   const parsedTimeslots = useMemo(
-    () => (timeslotsArr || []).map((s) => String(s || "").trim()).filter(Boolean),
+    () =>
+      (timeslotsArr || []).map((s) => String(s || "").trim()).filter(Boolean),
     [timeslotsArr]
   );
 
   const totalCourts = useMemo(
-    () => venues.reduce((sum, v) => sum + (Array.isArray(v.courts) ? v.courts.length : 0), 0),
+    () =>
+      venues.reduce(
+        (sum, v) => sum + (Array.isArray(v.courts) ? v.courts.length : 0),
+        0
+      ),
     [venues]
   );
 
-  const capacityPerWeek = useMemo(() => totalCourts * parsedTimeslots.length, [totalCourts, parsedTimeslots.length]);
+  const capacityPerWeek = useMemo(
+    () => totalCourts * parsedTimeslots.length,
+    [totalCourts, parsedTimeslots.length]
+  );
 
-  const slotRowsAll = useMemo(() => buildSlotRowsAll(venues, parsedTimeslots), [venues, parsedTimeslots]);
+  const slotRowsAll = useMemo(
+    () => buildSlotRowsAll(venues, parsedTimeslots),
+    [venues, parsedTimeslots]
+  );
 
   const teams = useMemo(() => buildTeams(divisions), [divisions]);
   const teamsSet = useMemo(() => new Set(teams), [teams]);
@@ -70,29 +94,44 @@ export default function App() {
   const validation = useMemo(() => {
     const errs: string[] = [];
     const infos: string[] = [];
-    infos.push(`Capacity per week: ${totalCourts} courts × ${parsedTimeslots.length} timeslots = ${capacityPerWeek} match-slots/week`);
+    infos.push(
+      `Capacity per week: ${totalCourts} courts × ${parsedTimeslots.length} timeslots = ${capacityPerWeek} match-slots/week`
+    );
     infos.push(`Teams total: ${teams.length}`);
-    infos.push("Note: placement is currently greedy/stable (no clash/time-pref optimization yet).");
+    infos.push(
+      "Note: placement is currently greedy/stable (no clash/time-pref optimization yet)."
+    );
 
     for (const d of divisions) {
-      if (!d.code || !String(d.code).trim()) errs.push("Division code missing.");
-      if (Number(d.teams) <= 0) errs.push(`Division ${d.code || "?"}: team count must be > 0`);
-      if (!Number.isFinite(d.netHeightM) || d.netHeightM <= 0) errs.push(`Division ${d.code || "?"}: net height must be a valid number`);
+      if (!d.code || !String(d.code).trim())
+        errs.push("Division code missing.");
+      if (Number(d.teams) <= 0)
+        errs.push(`Division ${d.code || "?"}: team count must be > 0`);
+      if (!Number.isFinite(d.netHeightM) || d.netHeightM <= 0)
+        errs.push(
+          `Division ${d.code || "?"}: net height must be a valid number`
+        );
     }
 
     for (const v of venues) {
       if (!v.name || !String(v.name).trim()) errs.push("Venue name missing.");
-      const courts = Array.isArray(v.courts) ? v.courts.map((x) => String(x || "").trim()).filter(Boolean) : [];
-      if (courts.length <= 0) errs.push(`Venue ${v.name || "?"}: add at least 1 court name`);
-      if (new Set(courts).size !== courts.length) errs.push(`Venue ${v.name || "?"}: duplicate court names`);
+      const courts = Array.isArray(v.courts)
+        ? v.courts.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+      if (courts.length <= 0)
+        errs.push(`Venue ${v.name || "?"}: add at least 1 court name`);
+      if (new Set(courts).size !== courts.length)
+        errs.push(`Venue ${v.name || "?"}: duplicate court names`);
     }
 
     if (parsedTimeslots.length === 0) errs.push("Add at least 1 timeslot.");
 
     const tsClean = parsedTimeslots.map((x) => String(x).trim());
-    if (new Set(tsClean).size !== tsClean.length) errs.push("Timeslots: duplicate values");
+    if (new Set(tsClean).size !== tsClean.length)
+      errs.push("Timeslots: duplicate values");
     for (const t of tsClean) {
-      if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(t)) errs.push(`Timeslots: invalid '${t}' (use HH:MM)`);
+      if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(t))
+        errs.push(`Timeslots: invalid '${t}' (use HH:MM)`);
     }
     if (Number(weeks) <= 0) errs.push("Weeks must be > 0.");
 
@@ -102,12 +141,25 @@ export default function App() {
     }
 
     return { errs, infos };
-  }, [capacityPerWeek, clashes, divisions, parsedTimeslots, teams.length, teamsSet, totalCourts, venues, weeks]);
+  }, [
+    capacityPerWeek,
+    clashes,
+    divisions,
+    parsedTimeslots,
+    teams.length,
+    teamsSet,
+    totalCourts,
+    venues,
+    weeks,
+  ]);
 
   const [schedule, setSchedule] = useState<Match[]>([]);
-  const [previewTab, setPreviewTab] = useState<"division" | "csv" | "grouped">("division");
-  const [mainTab, setMainTab] = useState<"config" | "teams" | "preview">("config");
-  
+  const [previewTab, setPreviewTab] = useState<"division" | "csv" | "grouped">(
+    "division"
+  );
+  const [mainTab, setMainTab] = useState<"config" | "teams" | "preview">(
+    "config"
+  );
 
   const teamsByDivision = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -130,7 +182,9 @@ export default function App() {
       map.get(m.week)!.push(m);
     }
     for (const [w, arr] of map.entries()) {
-      arr.sort((a, b) => (a.division + a.home).localeCompare(b.division + b.home));
+      arr.sort((a, b) =>
+        (a.division + a.home).localeCompare(b.division + b.home)
+      );
     }
     return map;
   }, [schedule]);
@@ -145,11 +199,14 @@ export default function App() {
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <h1 className="text-xl font-semibold">Volleyball Scheduler</h1>
-              <p className="text-sm text-gray-600">Iterative build — rules added one by one.</p>
+              <p className="text-sm text-gray-600">
+                Iterative build — rules added one by one.
+              </p>
             </div>
             <div className="text-sm text-gray-700">
               <div>
-                <span className="font-medium">Revisit later:</span> (1) timeslot prefs, (2) stadium exceptions
+                <span className="font-medium">Revisit later:</span> (1) timeslot
+                prefs, (2) stadium exceptions
               </div>
             </div>
           </div>
@@ -160,7 +217,12 @@ export default function App() {
             items={[
               { key: "config", label: "Configuration" },
               { key: "teams", label: "Teams" },
-              { key: "preview", label: "CSV Preview", disabled: !schedule.length, title: schedule.length ? "" : "Generate pairings first" },
+              {
+                key: "preview",
+                label: "Schedule",
+                disabled: !schedule.length,
+                title: schedule.length ? "" : "Generate pairings first",
+              },
             ]}
           />
 
@@ -186,7 +248,10 @@ export default function App() {
               validationInfos={validation.infos}
               canGenerate={validation.errs.length === 0}
               onGenerate={() => {
-                const ms = generatePairings({ weeks: Number(weeks), divisions });
+                const ms = generatePairings({
+                  weeks: Number(weeks),
+                  divisions,
+                });
                 const placed = placeMatches(ms, venues, parsedTimeslots);
                 setSchedule(placed);
                 setPreviewTab("division");
@@ -206,7 +271,7 @@ export default function App() {
               teamNames={teamNames}
               setTeamNames={setTeamNames}
               displayName={displayName}
-              timeslots={parsedTimeslots}          // or timeslotsArr, but parsed is cleaner
+              timeslots={parsedTimeslots} // or timeslotsArr, but parsed is cleaner
               teamTimePrefs={teamTimePrefs}
               setTeamTimePrefs={setTeamTimePrefs}
             />
@@ -230,7 +295,8 @@ export default function App() {
 
           {mainTab === "preview" && schedule.length === 0 && (
             <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-600">
-              No schedule generated yet. Go to <span className="font-medium">Configuration</span> and click{" "}
+              No schedule generated yet. Go to{" "}
+              <span className="font-medium">Configuration</span> and click{" "}
               <span className="font-medium">Generate 5-week pairings</span>.
             </div>
           )}
