@@ -21,6 +21,7 @@ export function buildSlotList(venues: Venue[], timeslots: string[]): Slot[] {
       for (const t of timeslots) {
         const timeRaw = String(t);
         slots.push({ venue, court: courtLabel, timeRaw, time: formatTimeLabel(timeRaw) });
+        // slots.push({ venue, court: courtLabel, timeRaw, time: timeRaw) });
       }
     }
   }

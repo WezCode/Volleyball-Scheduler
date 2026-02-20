@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import type {
   Division,
   DivisionGrid,
@@ -8,6 +8,7 @@ import type {
 } from "../lib/types";
 import { teamNum } from "../lib/ids";
 import { computeNetHeightChanges } from "../lib/netHeights";
+import { formatTimeLabel, toHHMM } from "../lib/time";
 
 export function PreviewPanel(props: {
   weeks: number;
@@ -49,6 +50,24 @@ export function PreviewPanel(props: {
     [schedule, divisions, timeslots]
   );
 
+  const netChangeSlots = useMemo(() => {
+    // highlight BOTH the "from" slot and the "to" slot for each change
+    // key format: week||venue||court||HH:MM
+    const s = new Set<string>();
+
+    for (const e of netChanges.events || []) {
+      const venue = String(e.venue || "").trim();
+      const court = String(e.court || "").trim();
+
+      const fromHHMM = toHHMM(e.fromTimeslot);
+      const toHHMM_ = toHHMM(e.toTimeslot);
+
+      s.add([e.week, venue, court, fromHHMM].join("||"));
+      s.add([e.week, venue, court, toHHMM_].join("||"));
+    }
+    return s;
+  }, [netChanges.events]);
+
   const heightByDivision = useMemo(() => {
     const m = new Map<string, number>();
     for (const d of divisions || []) {
@@ -57,20 +76,6 @@ export function PreviewPanel(props: {
     return m;
   }, [divisions]);
 
-  console.log("division sample:", divisions[0]);
-  console.log(
-    "division keys:",
-    divisions[0] ? Object.keys(divisions[0] as any) : null
-  );
-
-  console.log("heightByDivision:", Array.from(heightByDivision.entries()));
-  console.log(
-    "first match division:",
-    schedule[0]?.division,
-    "height lookup:",
-    heightByDivision.get(schedule[0]?.division)
-  );
-
   const courts = useMemo(() => {
     const seen = new Set<string>();
     const out: { venue: string; court: string }[] = [];
@@ -78,7 +83,11 @@ export function PreviewPanel(props: {
     for (const m of schedule || []) {
       const venue = String(m.venue || "").trim();
       const court = String(m.court || "").trim();
+
+      // ✅ skip BYE / placeholders
       if (!venue || !court) continue;
+      if (court.toUpperCase() === "BYE") continue;
+      if (venue.toUpperCase() === "BYE") continue;
 
       const k = `${venue}||${court}`;
       if (seen.has(k)) continue;
@@ -92,7 +101,6 @@ export function PreviewPanel(props: {
   }, [schedule]);
 
   const planByWeekCourt = useMemo(() => {
-    // week -> venue||court -> time -> {division,heightM}
     const out = new Map<
       number,
       Map<string, Map<string, { division: string; heightM: number }>>
@@ -102,7 +110,10 @@ export function PreviewPanel(props: {
       const week = Number(m.week);
       const venue = String(m.venue || "").trim();
       const court = String(m.court || "").trim();
-      const time = String(m.time || "").trim();
+
+      // canonical HH:MM key
+      const time = toHHMM(String(m.time || "").trim());
+
       const division = String(m.division || "").trim();
       if (!week || !venue || !court || !time || !division) continue;
 
@@ -119,6 +130,31 @@ export function PreviewPanel(props: {
 
     return out;
   }, [schedule, heightByDivision]);
+
+  useEffect(() => {
+    if (!timeslots?.length || !schedule?.length) return;
+
+    const w = 1;
+    const byCourt = planByWeekCourt.get(w);
+
+    console.log("DEBUG timeslots (HH:MM):", timeslots);
+
+    if (!byCourt) {
+      console.log("DEBUG no byCourt map for week", w);
+      return;
+    }
+
+    const firstCourtEntry = byCourt.entries().next();
+    if (firstCourtEntry.done) {
+      console.log("DEBUG byCourt exists but empty for week", w);
+      return;
+    }
+
+    const [courtKey, byTime] = firstCourtEntry.value;
+
+    console.log("DEBUG first courtKey:", courtKey);
+    console.log("DEBUG byTime keys (times in schedule):", [...byTime.keys()]);
+  }, [timeslots, schedule, planByWeekCourt]);
 
   return (
     <div className="mt-4 rounded-2xl border border-gray-200 overflow-hidden">
@@ -231,121 +267,103 @@ export function PreviewPanel(props: {
                           </div>
                         ))}
                       </div>
-                      <div className="space-y-6">
-                        {weekNums.map((w) => {
-                          const byCourt = planByWeekCourt.get(w) || new Map();
 
-                          return (
-                            <div
-                              key={w}
-                              className="rounded-2xl border border-gray-200 overflow-hidden"
-                            >
-                              <div className="bg-white p-4 border-b border-gray-200">
-                                <div className="flex items-center justify-between">
-                                  <div className="text-sm font-semibold">
-                                    Week {w}
-                                  </div>
-                                  <div className="text-xs text-gray-600">
-                                    Courts:{" "}
-                                    <span className="font-medium">
-                                      {courts.length}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="text-xs text-gray-600">
-                                  Division + net height required at each
-                                  timeslot (no teams).
-                                </div>
-                              </div>
-
-                              <div className="bg-white p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                                {courts.map(({ venue, court }) => {
-                                  const courtKey = `${String(
-                                    venue || ""
-                                  ).trim()}||${String(court || "").trim()}`;
-                                  const byTime =
-                                    byCourt.get(courtKey) ||
-                                    new Map<
-                                      string,
-                                      { division: string; heightM: number }
-                                    >();
-
+                      <div className="overflow-auto rounded-xl border border-gray-200">
+                        <table className="min-w-full text-sm">
+                          <thead className="sticky top-0 bg-white">
+                            <tr className="text-left text-xs text-gray-600 border-b border-gray-200">
+                              <th className="py-2 px-3">Venue</th>
+                              <th className="py-2 px-3">Court</th>
+                              <th className="py-2 px-3">Time</th>
+                              {weekNums.map((w) => (
+                                <th key={w} className="py-2 px-3">
+                                  Week {w}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {slotRowsDiv.map((r) => (
+                              <tr
+                                key={r.key}
+                                className="border-t border-gray-100"
+                              >
+                                <td className="py-2 px-3 text-xs font-medium text-gray-800">
+                                  {r.venue}
+                                </td>
+                                <td className="py-2 px-3 font-mono">
+                                  {r.court}
+                                </td>
+                                <td className="py-2 px-3 font-mono">
+                                  {r.time}
+                                </td>
+                                {weekNums.map((w) => {
+                                  const cell = byWeek.get(w) || {
+                                    bySlot: new Map(),
+                                    bye: null,
+                                  };
+                                  const p = cell.bySlot.get(r.key);
+                                  if (!p)
+                                    return (
+                                      <td
+                                        key={w}
+                                        className="py-2 px-3 text-gray-400"
+                                      >
+                                        -
+                                      </td>
+                                    );
+                                  const label = `${teamNum(p.home)} v ${teamNum(
+                                    p.away
+                                  )}`;
+                                  const tip = `${displayName(
+                                    p.home
+                                  )} vs ${displayName(p.away)}`;
                                   return (
-                                    <div
-                                      key={courtKey}
-                                      className="rounded-xl border border-gray-200 overflow-hidden"
+                                    <td
+                                      key={w}
+                                      className="py-2 px-3 font-mono"
+                                      title={tip}
                                     >
-                                      <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-                                        <div className="text-sm font-medium">
-                                          {venue} ·{" "}
-                                          <span className="font-mono">
-                                            {court}
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      <div className="overflow-auto">
-                                        <table className="min-w-full text-sm">
-                                          <thead className="sticky top-0 bg-white">
-                                            <tr className="text-left text-xs text-gray-600 border-b border-gray-200">
-                                              <th className="py-2 px-3">
-                                                Time
-                                              </th>
-                                              <th className="py-2 px-3">
-                                                Division
-                                              </th>
-                                              <th className="py-2 px-3">
-                                                Net height
-                                              </th>
-                                            </tr>
-                                          </thead>
-                                          <tbody>
-                                            {(timeslots || []).map((tRaw) => {
-                                              const t = String(
-                                                tRaw || ""
-                                              ).trim();
-                                              const v = byTime.get(t);
-
-                                              return (
-                                                <tr
-                                                  key={t}
-                                                  className="border-t border-gray-100 hover:bg-gray-50"
-                                                >
-                                                  <td className="py-2 px-3 font-mono">
-                                                    {t}
-                                                  </td>
-                                                  {!v ? (
-                                                    <>
-                                                      <td className="py-2 px-3 text-gray-400">
-                                                        -
-                                                      </td>
-                                                      <td className="py-2 px-3 text-gray-400">
-                                                        -
-                                                      </td>
-                                                    </>
-                                                  ) : (
-                                                    <>
-                                                      <td className="py-2 px-3 font-mono">
-                                                        {v.division}
-                                                      </td>
-                                                      <td className="py-2 px-3 font-mono">
-                                                        {v.heightM.toFixed(2)}m
-                                                      </td>
-                                                    </>
-                                                  )}
-                                                </tr>
-                                              );
-                                            })}
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    </div>
+                                      {label}
+                                    </td>
                                   );
                                 })}
-                              </div>
-                            </div>
-                          );
-                        })}
+                              </tr>
+                            ))}
+
+                            <tr className="border-t border-gray-200 bg-gray-50">
+                              <td className="py-2 px-3 text-xs font-medium text-gray-700">
+                                BYE
+                              </td>
+                              <td className="py-2 px-3" />
+                              <td className="py-2 px-3" />
+                              {weekNums.map((w) => {
+                                const cell = byWeek.get(w) || {
+                                  bySlot: new Map(),
+                                  bye: null,
+                                };
+                                if (!cell.bye)
+                                  return (
+                                    <td
+                                      key={w}
+                                      className="py-2 px-3 text-gray-400"
+                                    >
+                                      -
+                                    </td>
+                                  );
+                                return (
+                                  <td
+                                    key={w}
+                                    className="py-2 px-3 font-mono"
+                                    title={displayName(cell.bye)}
+                                  >
+                                    {teamNum(cell.bye)}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   </div>
@@ -411,16 +429,26 @@ export function PreviewPanel(props: {
                               </thead>
                               <tbody>
                                 {(timeslots || []).map((tRaw) => {
-                                  const t = String(tRaw || "").trim();
+                                  const t = String(tRaw || "").trim(); // keep HH:MM for lookup
                                   const v = byTime.get(t);
+                                  const slotKey = [
+                                    w,
+                                    String(venue).trim(),
+                                    String(court).trim(),
+                                    toHHMM(t),
+                                  ].join("||");
+                                  const isNetChangeRow =
+                                    netChangeSlots.has(slotKey);
 
                                   return (
                                     <tr
                                       key={t}
-                                      className="border-t border-gray-100 hover:bg-gray-50"
+                                      className={`border-t border-gray-100 hover:bg-gray-50 ${
+                                        isNetChangeRow ? "bg-red-50" : ""
+                                      }`}
                                     >
                                       <td className="py-2 px-3 font-mono">
-                                        {t}
+                                        {formatTimeLabel(t)}
                                       </td>
                                       {!v ? (
                                         <>
