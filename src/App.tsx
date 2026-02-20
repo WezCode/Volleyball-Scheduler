@@ -1,3 +1,4 @@
+// App.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_CLASH_ROWS,
@@ -35,8 +36,7 @@ export default function App() {
   >({});
 
   const parsedTimeslots = useMemo(
-    () =>
-      (timeslotsArr || []).map((s) => String(s || "").trim()).filter(Boolean),
+    () => (timeslotsArr || []).map((s) => String(s || "").trim()).filter(Boolean),
     [timeslotsArr]
   );
 
@@ -98,19 +98,13 @@ export default function App() {
       `Capacity per week: ${totalCourts} courts × ${parsedTimeslots.length} timeslots = ${capacityPerWeek} match-slots/week`
     );
     infos.push(`Teams total: ${teams.length}`);
-    infos.push(
-      "Note: placement is currently greedy/stable (no clash/time-pref optimization yet)."
-    );
+    infos.push("Note: placement is currently greedy/stable (no clash/time-pref optimization yet).");
 
     for (const d of divisions) {
-      if (!d.code || !String(d.code).trim())
-        errs.push("Division code missing.");
-      if (Number(d.teams) <= 0)
-        errs.push(`Division ${d.code || "?"}: team count must be > 0`);
+      if (!d.code || !String(d.code).trim()) errs.push("Division code missing.");
+      if (Number(d.teams) <= 0) errs.push(`Division ${d.code || "?"}: team count must be > 0`);
       if (!Number.isFinite(d.netHeightM) || d.netHeightM <= 0)
-        errs.push(
-          `Division ${d.code || "?"}: net height must be a valid number`
-        );
+        errs.push(`Division ${d.code || "?"}: net height must be a valid number`);
     }
 
     for (const v of venues) {
@@ -118,20 +112,16 @@ export default function App() {
       const courts = Array.isArray(v.courts)
         ? v.courts.map((x) => String(x || "").trim()).filter(Boolean)
         : [];
-      if (courts.length <= 0)
-        errs.push(`Venue ${v.name || "?"}: add at least 1 court name`);
-      if (new Set(courts).size !== courts.length)
-        errs.push(`Venue ${v.name || "?"}: duplicate court names`);
+      if (courts.length <= 0) errs.push(`Venue ${v.name || "?"}: add at least 1 court name`);
+      if (new Set(courts).size !== courts.length) errs.push(`Venue ${v.name || "?"}: duplicate court names`);
     }
 
     if (parsedTimeslots.length === 0) errs.push("Add at least 1 timeslot.");
 
     const tsClean = parsedTimeslots.map((x) => String(x).trim());
-    if (new Set(tsClean).size !== tsClean.length)
-      errs.push("Timeslots: duplicate values");
+    if (new Set(tsClean).size !== tsClean.length) errs.push("Timeslots: duplicate values");
     for (const t of tsClean) {
-      if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(t))
-        errs.push(`Timeslots: invalid '${t}' (use HH:MM)`);
+      if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(t)) errs.push(`Timeslots: invalid '${t}' (use HH:MM)`);
     }
     if (Number(weeks) <= 0) errs.push("Weeks must be > 0.");
 
@@ -154,12 +144,8 @@ export default function App() {
   ]);
 
   const [schedule, setSchedule] = useState<Match[]>([]);
-  const [previewTab, setPreviewTab] = useState<"division" | "netheights">(
-    "division"
-  );
-  const [mainTab, setMainTab] = useState<"config" | "teams" | "preview">(
-    "config"
-  );
+  const [previewTab, setPreviewTab] = useState<"division" | "netheights">("division");
+  const [mainTab, setMainTab] = useState<"config" | "teams" | "preview">("config");
 
   const teamsByDivision = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -182,9 +168,7 @@ export default function App() {
       map.get(m.week)!.push(m);
     }
     for (const [w, arr] of map.entries()) {
-      arr.sort((a, b) =>
-        (a.division + a.home).localeCompare(b.division + b.home)
-      );
+      arr.sort((a, b) => (a.division + a.home).localeCompare(b.division + b.home));
     }
     return map;
   }, [schedule]);
@@ -199,14 +183,11 @@ export default function App() {
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <h1 className="text-xl font-semibold">Volleyball Scheduler</h1>
-              <p className="text-sm text-gray-600">
-                Iterative build — rules added one by one.
-              </p>
+              <p className="text-sm text-gray-600">Iterative build — rules added one by one.</p>
             </div>
             <div className="text-sm text-gray-700">
               <div>
-                <span className="font-medium">Revisit later:</span> (1) timeslot
-                prefs, (2) stadium exceptions
+                <span className="font-medium">Revisit later:</span> (1) timeslot prefs, (2) stadium exceptions
               </div>
             </div>
           </div>
@@ -252,7 +233,10 @@ export default function App() {
                   weeks: Number(weeks),
                   divisions,
                 });
-                const placed = placeMatches(ms, venues, parsedTimeslots);
+
+                // IMPORTANT: pass clashes through
+                const placed = placeMatches(ms, venues, parsedTimeslots, clashes);
+
                 setSchedule(placed);
                 setPreviewTab("division");
                 setMainTab("preview");
@@ -271,7 +255,7 @@ export default function App() {
               teamNames={teamNames}
               setTeamNames={setTeamNames}
               displayName={displayName}
-              timeslots={parsedTimeslots} // or timeslotsArr, but parsed is cleaner
+              timeslots={parsedTimeslots}
               teamTimePrefs={teamTimePrefs}
               setTeamTimePrefs={setTeamTimePrefs}
             />
@@ -296,8 +280,7 @@ export default function App() {
 
           {mainTab === "preview" && schedule.length === 0 && (
             <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-600">
-              No schedule generated yet. Go to{" "}
-              <span className="font-medium">Configuration</span> and click{" "}
+              No schedule generated yet. Go to <span className="font-medium">Configuration</span> and click{" "}
               <span className="font-medium">Generate 5-week pairings</span>.
             </div>
           )}

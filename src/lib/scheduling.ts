@@ -1,15 +1,38 @@
+// lib/scheduling.ts
 import type { Division, DivisionGrid, DivisionStats, Match, Venue } from "./types";
 import { pad2 } from "./ids";
 import { buildSlotList } from "./slots";
 
-export function generatePairings(params: { weeks: number; divisions: Division[] }): Match[] {
+/**
+ * If true, prints detailed logs for placement + clash checks.
+ * (This can get noisy on bigger schedules.)
+ */
+const DEBUG_TIME_CLASHES = true;
+
+function mkPairKey(a: string, b: string) {
+  const x = String(a || "").trim();
+  const y = String(b || "").trim();
+  return x < y ? `${x}||${y}` : `${y}||${x}`;
+}
+
+/**
+ * Generates weekly pairings per division (round-robin-ish via rotation).
+ * NOTE: This does NOT enforce clashes, because clashes are "same time" constraints,
+ * which must be enforced during slot placement.
+ */
+export function generatePairings(params: {
+  weeks: number;
+  divisions: Division[];
+}): Match[] {
   const { weeks, divisions } = params;
 
   const teamsByDiv = new Map<string, string[]>();
   for (const d of divisions) {
+    const code = String(d.code || "").trim();
+    const count = Number(d.teams || 0);
     const arr: string[] = [];
-    for (let i = 1; i <= Number(d.teams || 0); i++) arr.push(`${d.code}-${pad2(i)}`);
-    teamsByDiv.set(d.code, arr);
+    for (let i = 1; i <= count; i++) arr.push(`${code}-${pad2(i)}`);
+    teamsByDiv.set(code, arr);
   }
 
   const matches: Match[] = [];
@@ -29,10 +52,33 @@ export function generatePairings(params: { weeks: number; divisions: Division[] 
   return matches;
 }
 
-export function placeMatches(pairings: Match[], venues: Venue[], timeslots: string[]): Match[] {
+/**
+ * Places games into venue/court/time slots.
+ *
+ * clashes = array of [teamA, teamB] where teamA and teamB must NOT play at the same time
+ * in the same week (across any divisions).
+ */
+export function placeMatches(
+  pairings: Match[],
+  venues: Venue[],
+  timeslots: string[],
+  clashes?: Array<[string, string]>
+): Match[] {
   const slots = buildSlotList(venues, timeslots);
+
+  // Build clash set for O(1) lookup
+  const clashSet = new Set<string>();
+  for (const [a, b] of clashes || []) {
+    const aa = String(a || "").trim();
+    const bb = String(b || "").trim();
+    if (!aa || !bb) continue;
+    clashSet.add(mkPairKey(aa, bb));
+  }
+  const isClashPair = (a: string, b: string) => clashSet.has(mkPairKey(a, b));
+
   const out: Match[] = [];
 
+  // Group pairings by week
   const byWeek = new Map<number, Match[]>();
   for (const m of pairings) {
     if (!byWeek.has(m.week)) byWeek.set(m.week, []);
@@ -43,21 +89,140 @@ export function placeMatches(pairings: Match[], venues: Venue[], timeslots: stri
     const games = arr.filter((x) => x.away !== "BYE");
     const byes = arr.filter((x) => x.away === "BYE");
 
-    games.sort((a, b) => (a.division + a.home + a.away).localeCompare(b.division + b.home + b.away));
+    // Stable deterministic ordering
+    games.sort((a, b) =>
+      (a.division + a.home + a.away).localeCompare(b.division + b.home + b.away)
+    );
 
-    for (let gi = 0; gi < games.length; gi++) {
-      const s = slots[gi];
-      const g = games[gi];
+    // NEW: Track which exact venue/court/time slots are already used this week
+    const usedSlotKeys = new Set<string>();
 
-      if (!s) out.push({ week, division: g.division, home: g.home, away: g.away, venue: "", court: "", time: "" });
-      else out.push({ week, division: g.division, home: g.home, away: g.away, venue: s.venue, court: s.court, time: s.time });
+    // Track who is already playing at (week,time)
+    // time -> Set<teamId>
+    const playingAtTime = new Map<string, Set<string>>();
+
+    const ensureSet = (time: string) => {
+      const t = String(time || "").trim();
+      if (!playingAtTime.has(t)) playingAtTime.set(t, new Set());
+      return playingAtTime.get(t)!;
+    };
+
+    const canPlaceGameAtTime = (time: string, home: string, away: string) => {
+      const t = String(time || "").trim();
+      const playing = ensureSet(t);
+
+      // Rule 1: no team double-booked at same time
+      if (playing.has(home) || playing.has(away)) {
+        if (DEBUG_TIME_CLASHES) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[week ${week}] [reject] ${home} vs ${away} @ ${t}: team already playing`,
+            { homeAlready: playing.has(home), awayAlready: playing.has(away) }
+          );
+        }
+        return false;
+      }
+
+      // Rule 2: no clash-pairs at same time
+      // If home/away clashes with ANYONE already playing at this time, reject
+      for (const other of playing) {
+        const clashHome = isClashPair(home, other);
+        const clashAway = isClashPair(away, other);
+        if (clashHome || clashAway) {
+          if (DEBUG_TIME_CLASHES) {
+            // eslint-disable-next-line no-console
+            console.log(
+              `[week ${week}] [reject] ${home} vs ${away} @ ${t}: clash with ${other}`,
+              { clashHome, clashAway, other }
+            );
+          }
+          return false;
+        }
+      }
+
+      if (DEBUG_TIME_CLASHES) {
+        // eslint-disable-next-line no-console
+        console.log(`[week ${week}] [ok] ${home} vs ${away} @ ${t}`);
+      }
+      return true;
+    };
+
+    const commitPlacement = (time: string, home: string, away: string) => {
+      const playing = ensureSet(time);
+      playing.add(home);
+      playing.add(away);
+    };
+
+    // Place each game into the first available slot that passes checks
+    for (const g of games) {
+      let placed = false;
+
+      for (const s of slots) {
+        const time = String(s.time || "").trim();
+        if (!time) continue;
+
+        const venue = String(s.venue || "").trim();
+        const court = String(s.court || "").trim();
+
+        // NEW: prevent double-booking the same physical court slot
+        const slotKey = `${venue}__${court}__${time}`;
+        if (usedSlotKeys.has(slotKey)) continue;
+
+        // Check constraints for this week/time
+        if (!canPlaceGameAtTime(time, g.home, g.away)) continue;
+
+        // Place it
+        out.push({
+          week,
+          division: g.division,
+          home: g.home,
+          away: g.away,
+          venue,
+          court,
+          time: s.time,
+        });
+
+        commitPlacement(time, g.home, g.away);
+        usedSlotKeys.add(slotKey);
+        placed = true;
+        break;
+      }
+
+      if (!placed) {
+        // Could not place without violating time-clash constraints
+        if (DEBUG_TIME_CLASHES) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[week ${week}] [unassigned] ${g.division} ${g.home} vs ${g.away}: no valid slot (time clash constraints)`
+          );
+        }
+        out.push({
+          week,
+          division: g.division,
+          home: g.home,
+          away: g.away,
+          venue: "",
+          court: "",
+          time: "",
+        });
+      }
     }
 
+    // Keep BYEs as artifacts (not real courts)
     for (const b of byes) {
-      out.push({ week, division: b.division, home: b.home, away: "BYE", venue: "BYE", court: "-", time: "" });
+      out.push({
+        week,
+        division: b.division,
+        home: b.home,
+        away: "BYE",
+        venue: "BYE",
+        court: "-",
+        time: "",
+      });
     }
   }
 
+  // Final sort for display
   out.sort((a, b) => {
     if (a.week !== b.week) return a.week - b.week;
     const d = a.division.localeCompare(b.division);
