@@ -144,7 +144,9 @@ export default function App() {
   ]);
 
   const [schedule, setSchedule] = useState<Match[]>([]);
-  const [previewTab, setPreviewTab] = useState<"division" | "netheights">("division");
+  const [previewTab, setPreviewTab] = useState<
+  "division" | "netheights" | "clashes"
+>("division");
   const [mainTab, setMainTab] = useState<"config" | "teams" | "preview">("config");
 
   const teamsByDivision = useMemo(() => {
@@ -268,6 +270,7 @@ export default function App() {
               schedule={schedule}
               previewTab={previewTab}
               setPreviewTab={setPreviewTab}
+              clashes={clashes}
               divisionGrid={divisionGrid}
               divisionStats={divisionStats}
               slotRowsAll={slotRowsAll}

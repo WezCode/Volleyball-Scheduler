@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type {
   Division,
   DivisionGrid,
@@ -10,14 +10,339 @@ import { teamNum } from "../lib/ids";
 import { computeNetHeightChanges } from "../lib/netHeights";
 import { formatTimeLabel, toHHMM } from "../lib/time";
 
+// --- Clash groups tab: timeslots rows × weeks columns (with team colours) ---
+
+function buildClashGroups(edges: Array<[string, string]>) {
+  // Connected components (A-B and B-C => group [A,B,C])
+  const adj = new Map<string, Set<string>>();
+
+  for (const [a0, b0] of edges || []) {
+    const a = String(a0 || "").trim();
+    const b = String(b0 || "").trim();
+    if (!a || !b || a === b) continue;
+
+    if (!adj.has(a)) adj.set(a, new Set());
+    if (!adj.has(b)) adj.set(b, new Set());
+    adj.get(a)!.add(b);
+    adj.get(b)!.add(a);
+  }
+
+  const seen = new Set<string>();
+  const groups: { id: string; teams: string[] }[] = [];
+
+  for (const start of adj.keys()) {
+    if (seen.has(start)) continue;
+    const stack = [start];
+    const comp: string[] = [];
+    seen.add(start);
+
+    while (stack.length) {
+      const cur = stack.pop()!;
+      comp.push(cur);
+      for (const nxt of adj.get(cur) || []) {
+        if (!seen.has(nxt)) {
+          seen.add(nxt);
+          stack.push(nxt);
+        }
+      }
+    }
+
+    comp.sort();
+    groups.push({ id: comp.join("|"), teams: comp });
+  }
+
+  groups.sort(
+    (a, b) =>
+      b.teams.length - a.teams.length || a.id.localeCompare(b.id)
+  );
+  return groups;
+}
+
+function makeTeamColorMap(groupTeams: string[]) {
+  // up to 3 teams → 3 distinct colour “badges”
+  const palette = [
+    "bg-blue-100 text-blue-900 border-blue-200",
+    "bg-emerald-100 text-emerald-900 border-emerald-200",
+    "bg-purple-100 text-purple-900 border-purple-200",
+  ];
+
+  const m = new Map<string, string>();
+  groupTeams.slice(0, 3).forEach((t, i) => m.set(t, palette[i]));
+  // fallback if somehow more than 3 sneaks in (still readable)
+  for (const t of groupTeams)
+    if (!m.has(t))
+      m.set(t, "bg-gray-100 text-gray-900 border-gray-200");
+  return m;
+}
+
+function TeamBadge(props: { label: string; className: string; title?: string }) {
+  return (
+    <span
+      title={props.title}
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold max-w-[140px] truncate ${props.className}`}
+    >
+      {props.label}
+    </span>
+  );
+}
+
+function buildGroupIndex(params: { groupTeams: string[]; schedule: Match[] }) {
+  const { groupTeams, schedule } = params;
+  const teamsSet = new Set(groupTeams);
+
+  // week -> time(HH:MM|TBD) -> matches involving group teams at that time
+  const byWeekTime = new Map<number, Map<string, Match[]>>();
+  const ensure = (week: number, time: string) => {
+    if (!byWeekTime.has(week)) byWeekTime.set(week, new Map());
+    const m = byWeekTime.get(week)!;
+    if (!m.has(time)) m.set(time, []);
+    return m.get(time)!;
+  };
+
+  for (const m of schedule || []) {
+    if (m.away === "BYE") continue;
+    const week = Number(m.week);
+    if (!week) continue;
+
+    if (!teamsSet.has(m.home) && !teamsSet.has(m.away)) continue;
+
+    const time = toHHMM(String(m.time || "").trim());
+    const keyTime = time || "TBD";
+    ensure(week, keyTime).push(m);
+  }
+
+  // stable ordering within each bucket
+  for (const byTime of byWeekTime.values()) {
+    for (const [t, arr] of byTime.entries()) {
+      arr.sort((a, b) =>
+        (a.division + a.home + a.away).localeCompare(
+          b.division + b.home + b.away
+        )
+      );
+      byTime.set(t, arr);
+    }
+  }
+
+  return byWeekTime;
+}
+
+function ClashGroupsView(props: {
+  weeks: number;
+  schedule: Match[];
+  clashes: Array<[string, string]>;
+  displayName: (id: string) => string;
+  timeslots: string[];
+}) {
+  const { weeks, schedule, clashes, displayName, timeslots } = props;
+
+  const groups = useMemo(() => buildClashGroups(clashes), [clashes]);
+  const weekNums = Array.from({ length: Number(weeks) }, (_, i) => i + 1);
+
+  const timeslotRows = useMemo(() => {
+    const t = (timeslots || [])
+      .map((x) => toHHMM(String(x || "").trim()))
+      .filter(Boolean);
+    return Array.from(new Set(t)).sort((a, b) => a.localeCompare(b));
+  }, [timeslots]);
+
+  if (!groups.length) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-600">
+        No clash pairs defined yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {groups.map((g, idx) => {
+        const teamColors = makeTeamColorMap(g.teams);
+        const byWeekTime = buildGroupIndex({ groupTeams: g.teams, schedule });
+
+        const hasTbd = weekNums.some(
+          (w) => (byWeekTime.get(w)?.get("TBD") || []).length > 0
+        );
+        const rows = hasTbd ? [...timeslotRows, "TBD"] : timeslotRows;
+
+        return (
+          <div
+            key={g.id}
+            className="rounded-2xl border border-gray-200 overflow-hidden"
+          >
+            <div className="bg-white p-4 border-b border-gray-200">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-semibold">
+                  Clash Group {idx + 1}{" "}
+                  <span className="text-gray-500 font-medium">
+                    ({g.teams.length} teams)
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {g.teams.slice(0, 3).map((t) => (
+                    <TeamBadge
+                      key={t}
+                      className={teamColors.get(t)!}
+                      label={displayName(t)}
+                      title={t}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-1 text-xs text-gray-600">
+                Row = time; cell shows who’s playing at that time that week.
+              </div>
+            </div>
+
+            <div className="bg-white p-4 overflow-x-auto -mx-4 px-4">
+              <table className="min-w-[1000px] w-full text-sm table-fixed">
+                <colgroup>
+                  <col style={{ width: 120 }} />
+                  {weekNums.map((w) => (
+                    <col key={w} style={{ width: 220 }} />
+                  ))}
+                </colgroup>
+
+                <thead className="sticky top-0 bg-white">
+                  <tr className="text-left text-xs text-gray-600 border-b border-gray-200">
+                    <th className="py-2 px-3 w-[120px] sticky left-0 bg-white z-10">
+                      Time
+                    </th>
+                    {weekNums.map((w) => (
+                      <th key={w} className="py-2 px-3">
+                        Week {w}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {rows.map((t) => (
+                    <tr key={t} className="border-t border-gray-100 align-top">
+                      <td className="py-2 px-3 font-mono text-xs text-gray-800 sticky left-0 bg-white z-10">
+                        {t === "TBD" ? "TBD" : formatTimeLabel(t)}
+                      </td>
+
+                      {weekNums.map((w) => {
+                        const matches = byWeekTime.get(w)?.get(t) || [];
+                        if (!matches.length) {
+                          return (
+                            <td key={w} className="py-2 px-3 text-gray-300">
+                              —
+                            </td>
+                          );
+                        }
+
+                        return (
+                          <td key={w} className="py-2 px-3">
+                            <div className="flex flex-col gap-2">
+                              {matches.map((m, i) => {
+                                const a = m.home;
+                                const b = m.away;
+
+                                const aInGroup = teamColors.has(a);
+                                const bInGroup = teamColors.has(b);
+
+                                let first = a;
+                                let second = b;
+
+                                // Put the clash-group team first if exactly one is in-group
+                                if (aInGroup && !bInGroup) {
+                                  first = a;
+                                  second = b;
+                                } else if (!aInGroup && bInGroup) {
+                                  first = b;
+                                  second = a;
+                                } else {
+                                  // both in group (or neither): stable order
+                                  if (String(a).localeCompare(String(b)) > 0) {
+                                    first = b;
+                                    second = a;
+                                  }
+                                }
+
+                                const where =
+                                  m.venue && m.court
+                                    ? `${m.venue} ${m.court}`
+                                    : m.venue
+                                    ? String(m.venue)
+                                    : "";
+
+                                return (
+                                  <div
+                                    key={i}
+                                    className="rounded-xl border border-gray-200 bg-gray-50 px-2 py-2"
+                                    title={`${displayName(first)} vs ${displayName(
+                                      second
+                                    )}`}
+                                  >
+                                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                      <span className="text-xs font-mono text-gray-700 shrink-0">
+                                        {m.division}
+                                      </span>
+
+                                      {teamColors.has(first) ? (
+                                        <TeamBadge
+                                          className={teamColors.get(first)!}
+                                          label={displayName(first)}
+                                          title={first}
+                                        />
+                                      ) : (
+                                        <span className="text-xs text-gray-700 max-w-[140px] truncate">
+                                          {displayName(first)}
+                                        </span>
+                                      )}
+
+                                      <span className="text-xs text-gray-500 shrink-0">
+                                        vs
+                                      </span>
+
+                                      {teamColors.has(second) ? (
+                                        <TeamBadge
+                                          className={teamColors.get(second)!}
+                                          label={displayName(second)}
+                                          title={second}
+                                        />
+                                      ) : (
+                                        <span className="text-xs text-gray-700 max-w-[140px] truncate">
+                                          {displayName(second)}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {where ? (
+                                      <div className="mt-1 text-[11px] text-gray-500">
+                                        {where}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function PreviewPanel(props: {
   weeks: number;
   divisions: Division[];
   schedule: Match[];
 
-  previewTab: "division" | "netheights";
+  previewTab: "division" | "netheights" | "clashes";
   setPreviewTab: React.Dispatch<
-    React.SetStateAction<"division" | "netheights">
+    React.SetStateAction<"division" | "netheights" | "clashes">
   >;
 
   divisionGrid: DivisionGrid;
@@ -27,6 +352,8 @@ export function PreviewPanel(props: {
   displayName: (id: string) => string;
   groupedByWeek: Map<number, Match[]>;
   timeslots: string[];
+
+  clashes: Array<[string, string]>;
 }) {
   const {
     weeks,
@@ -41,6 +368,7 @@ export function PreviewPanel(props: {
     displayName,
     groupedByWeek,
     timeslots,
+    clashes,
   } = props;
 
   const weekNums = Array.from({ length: Number(weeks) }, (_, i) => i + 1);
@@ -96,7 +424,9 @@ export function PreviewPanel(props: {
       out.push({ venue, court });
     }
 
-    out.sort((a, b) => (a.venue + a.court).localeCompare(b.venue + b.court));
+    out.sort((a, b) =>
+      (a.venue + a.court).localeCompare(b.venue + b.court)
+    );
     return out;
   }, [schedule]);
 
@@ -159,50 +489,72 @@ export function PreviewPanel(props: {
   return (
     <div className="mt-4 rounded-2xl border border-gray-200 overflow-hidden">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between bg-white p-4 border-b border-gray-200">
-        <div>
+        <div className="w-full">
           <div className="text-sm font-medium">Schedule preview</div>
           <div className="text-xs text-gray-600">
             Pairings + BYEs (with venue/court/time placement)
           </div>
-          <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-700">
-              <span className="font-medium">Net height changes</span>
 
-              {Array.from({ length: Number(weeks) }, (_, i) => i + 1).map(
-                (w) => (
-                  <span key={w}>
-                    Week {w}:{" "}
-                    <span className="font-semibold">
-                      {netChanges.breakdownByWeek[w] ?? 0}
+          {/* Preview tabs row */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              className={`rounded-lg px-3 py-1 text-xs border ${
+                previewTab === "division"
+                  ? "bg-black text-white border-black"
+                  : "bg-white border-gray-300 hover:bg-gray-50"
+              }`}
+              onClick={() => setPreviewTab("division")}
+            >
+              Division
+            </button>
+
+            <button
+              className={`rounded-lg px-3 py-1 text-xs border ${
+                previewTab === "netheights"
+                  ? "bg-black text-white border-black"
+                  : "bg-white border-gray-300 hover:bg-gray-50"
+              }`}
+              onClick={() => setPreviewTab("netheights")}
+              title="Show where net height changes happen"
+            >
+              Net changes
+            </button>
+
+            <button
+              className={`rounded-lg px-3 py-1 text-xs border ${
+                previewTab === "clashes"
+                  ? "bg-black text-white border-black"
+                  : "bg-white border-gray-300 hover:bg-gray-50"
+              }`}
+              onClick={() => setPreviewTab("clashes")}
+              title="Show clash groups and each group's games by week/time"
+            >
+              Clash groups
+            </button>
+
+            {/* Net summary box */}
+            <div className="ml-auto w-full md:w-auto mt-3 md:mt-0 rounded-xl border border-gray-200 bg-white p-3">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-700">
+                <span className="font-medium">Net height changes</span>
+
+                {Array.from({ length: Number(weeks) }, (_, i) => i + 1).map(
+                  (w) => (
+                    <span key={w}>
+                      Week {w}:{" "}
+                      <span className="font-semibold">
+                        {netChanges.breakdownByWeek[w] ?? 0}
+                      </span>
                     </span>
-                  </span>
-                )
-              )}
+                  )
+                )}
 
-              <span className="ml-auto flex items-center gap-2">
-                <span className="text-gray-600">
+                <span className="ml-auto text-gray-600">
                   Total:{" "}
                   <span className="font-semibold text-gray-900">
                     {netChanges.totalChanges}
                   </span>
                 </span>
-
-                <button
-                  className={`rounded-lg px-2 py-1 text-xs border ${
-                    previewTab === "netheights"
-                      ? "bg-black text-white border-black"
-                      : "bg-white border-gray-300 hover:bg-gray-50"
-                  }`}
-                  onClick={() =>
-                    setPreviewTab(
-                      previewTab === "netheights" ? "division" : "netheights"
-                    )
-                  }
-                  title="Show where net height changes happen"
-                >
-                  {previewTab === "netheights" ? "Back" : "Net changes"}
-                </button>
-              </span>
+              </div>
             </div>
           </div>
         </div>
@@ -370,7 +722,7 @@ export function PreviewPanel(props: {
                 );
               })}
           </div>
-        ) : (
+        ) : previewTab === "netheights" ? (
           <div className="space-y-6">
             {weekNums.map((w) => {
               const byCourt = planByWeekCourt.get(w) || new Map();
@@ -401,10 +753,7 @@ export function PreviewPanel(props: {
                       ).trim()}`;
                       const byTime =
                         byCourt.get(courtKey) ||
-                        new Map<
-                          string,
-                          { division: string; heightM: number }
-                        >();
+                        new Map<string, { division: string; heightM: number }>();
 
                       return (
                         <div
@@ -483,6 +832,14 @@ export function PreviewPanel(props: {
               );
             })}
           </div>
+        ) : (
+          <ClashGroupsView
+            weeks={Number(weeks)}
+            schedule={schedule}
+            clashes={clashes}
+            displayName={displayName}
+            timeslots={timeslots}
+          />
         )}
       </div>
     </div>
