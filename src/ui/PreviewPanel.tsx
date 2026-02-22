@@ -52,8 +52,7 @@ function buildClashGroups(edges: Array<[string, string]>) {
   }
 
   groups.sort(
-    (a, b) =>
-      b.teams.length - a.teams.length || a.id.localeCompare(b.id)
+    (a, b) => b.teams.length - a.teams.length || a.id.localeCompare(b.id)
   );
   return groups;
 }
@@ -70,12 +69,15 @@ function makeTeamColorMap(groupTeams: string[]) {
   groupTeams.slice(0, 3).forEach((t, i) => m.set(t, palette[i]));
   // fallback if somehow more than 3 sneaks in (still readable)
   for (const t of groupTeams)
-    if (!m.has(t))
-      m.set(t, "bg-gray-100 text-gray-900 border-gray-200");
+    if (!m.has(t)) m.set(t, "bg-gray-100 text-gray-900 border-gray-200");
   return m;
 }
 
-function TeamBadge(props: { label: string; className: string; title?: string }) {
+function TeamBadge(props: {
+  label: string;
+  className: string;
+  title?: string;
+}) {
   return (
     <span
       title={props.title}
@@ -128,15 +130,26 @@ function buildGroupIndex(params: { groupTeams: string[]; schedule: Match[] }) {
 
 function ClashGroupsView(props: {
   weeks: number;
+  weekNums?: number[];
   schedule: Match[];
   clashes: Array<[string, string]>;
   displayName: (id: string) => string;
   timeslots: string[];
 }) {
-  const { weeks, schedule, clashes, displayName, timeslots } = props;
+  const {
+    weeks,
+    weekNums: weekNumsProp,
+    schedule,
+    clashes,
+    displayName,
+    timeslots,
+  } = props;
+
+  const weekNums = weekNumsProp?.length
+    ? weekNumsProp
+    : Array.from({ length: Number(weeks) }, (_, i) => i + 1);
 
   const groups = useMemo(() => buildClashGroups(clashes), [clashes]);
-  const weekNums = Array.from({ length: Number(weeks) }, (_, i) => i + 1);
 
   const timeslotRows = useMemo(() => {
     const t = (timeslots || [])
@@ -273,9 +286,9 @@ function ClashGroupsView(props: {
                                   <div
                                     key={i}
                                     className="rounded-xl border border-gray-200 bg-gray-50 px-2 py-2"
-                                    title={`${displayName(first)} vs ${displayName(
-                                      second
-                                    )}`}
+                                    title={`${displayName(
+                                      first
+                                    )} vs ${displayName(second)}`}
                                   >
                                     <div className="flex flex-wrap items-center gap-2 min-w-0">
                                       <span className="text-xs font-mono text-gray-700 shrink-0">
@@ -371,6 +384,40 @@ export function PreviewPanel(props: {
     clashes,
   } = props;
 
+  const PAGE_SIZE = 5;
+  const [weekPage, setWeekPage] = useState(0);
+
+  const totalWeeks = Number(weeks) || 0;
+  const totalPages = Math.max(1, Math.ceil(totalWeeks / PAGE_SIZE));
+
+  const allWeekNums = useMemo(
+    () => Array.from({ length: totalWeeks }, (_, i) => i + 1),
+    [totalWeeks]
+  );
+
+  const visibleWeekNums = useMemo(() => {
+    const start = weekPage * PAGE_SIZE + 1; // 1-based week number
+    const end = Math.min(totalWeeks, start + PAGE_SIZE - 1);
+    if (totalWeeks <= 0) return [];
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  }, [weekPage, totalWeeks]);
+
+  const visibleWeekCols = useMemo(() => {
+    if (totalWeeks <= 0) return [];
+    const cols: Array<number | null> = [...visibleWeekNums];
+
+    // keep 5 columns wide on the last page (if roster is >= 5 weeks)
+    if (totalWeeks >= PAGE_SIZE) {
+      while (cols.length < PAGE_SIZE) cols.push(null);
+    }
+    return cols;
+  }, [visibleWeekNums, totalWeeks, PAGE_SIZE]);
+
+  // Keep weekPage valid if weeks changes (e.g. import JSON, change weeks)
+  useEffect(() => {
+    setWeekPage((p) => Math.min(p, Math.max(0, totalPages - 1)));
+  }, [totalPages]);
+
   const weekNums = Array.from({ length: Number(weeks) }, (_, i) => i + 1);
 
   const netChanges = useMemo(
@@ -424,9 +471,7 @@ export function PreviewPanel(props: {
       out.push({ venue, court });
     }
 
-    out.sort((a, b) =>
-      (a.venue + a.court).localeCompare(b.venue + b.court)
-    );
+    out.sort((a, b) => (a.venue + a.court).localeCompare(b.venue + b.court));
     return out;
   }, [schedule]);
 
@@ -488,7 +533,7 @@ export function PreviewPanel(props: {
 
   return (
     <div className="mt-4 rounded-2xl border border-gray-200 overflow-hidden">
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between bg-white p-4 border-b border-gray-200">
+      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between bg-white p-4 border-b border-gray-200">
         <div className="w-full">
           <div className="text-sm font-medium">Schedule preview</div>
           <div className="text-xs text-gray-600">
@@ -558,6 +603,37 @@ export function PreviewPanel(props: {
             </div>
           </div>
         </div>
+        {totalWeeks > PAGE_SIZE ? (
+          <div className="shrink-0 self-start md:ml-4">
+            <div className="grid grid-cols-[76px_76px_170px] items-center gap-2">
+              <button
+                className="w-[76px] rounded-lg px-3 py-1 text-xs border bg-white border-gray-300 hover:bg-gray-50 disabled:opacity-40"
+                disabled={weekPage === 0}
+                onClick={() => setWeekPage((p) => Math.max(0, p - 1))}
+                type="button"
+              >
+                Prev
+              </button>
+
+              <button
+                className="w-[76px] rounded-lg px-3 py-1 text-xs border bg-white border-gray-300 hover:bg-gray-50 disabled:opacity-40"
+                disabled={weekPage >= totalPages - 1}
+                onClick={() =>
+                  setWeekPage((p) => Math.min(totalPages - 1, p + 1))
+                }
+                type="button"
+              >
+                Next
+              </button>
+
+              <div className="w-[170px] text-right text-xs text-gray-600 whitespace-nowrap font-mono tabular-nums">
+                Weeks {visibleWeekNums[0] ?? 0}–
+                {visibleWeekNums[visibleWeekNums.length - 1] ?? 0} of{" "}
+                {totalWeeks}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="bg-white p-4">
@@ -579,7 +655,7 @@ export function PreviewPanel(props: {
 
                 // hide slot rows that are empty across all weeks
                 const slotRowsDiv = slotRowsAll.filter((r) => {
-                  for (const w of weekNums) {
+                  for (const w of allWeekNums) {
                     const cell = byWeek.get(w);
                     if (cell && cell.bySlot && cell.bySlot.get(r.key))
                       return true;
@@ -621,26 +697,42 @@ export function PreviewPanel(props: {
                       </div>
 
                       <div className="overflow-auto rounded-xl border border-gray-200">
-                        <table className="min-w-full text-sm">
+                        <table className="min-w-[980px] w-full text-sm table-fixed">
+                          <colgroup>
+                            <col style={{ width: 220 }} /> {/* Venue */}
+                            <col style={{ width: 90 }} /> {/* Court */}
+                            <col style={{ width: 90 }} /> {/* Time */}
+                            {visibleWeekCols.map((w, i) => (
+                              <col
+                                key={w ?? `empty-${i}`}
+                                style={{ width: 120 }}
+                              />
+                            ))}
+                          </colgroup>
+
                           <thead className="sticky top-0 bg-white">
                             <tr className="text-left text-xs text-gray-600 border-b border-gray-200">
                               <th className="py-2 px-3">Venue</th>
                               <th className="py-2 px-3">Court</th>
                               <th className="py-2 px-3">Time</th>
-                              {weekNums.map((w) => (
-                                <th key={w} className="py-2 px-3">
-                                  Week {w}
+                              {visibleWeekCols.map((w, i) => (
+                                <th
+                                  key={w ?? `empty-${i}`}
+                                  className="py-2 px-3 font-mono tabular-nums"
+                                >
+                                  {w ? `Week ${w}` : ""}
                                 </th>
                               ))}
                             </tr>
                           </thead>
+
                           <tbody>
                             {slotRowsDiv.map((r) => (
                               <tr
                                 key={r.key}
                                 className="border-t border-gray-100"
                               >
-                                <td className="py-2 px-3 text-xs font-medium text-gray-800">
+                                <td className="py-2 px-3 text-xs font-medium text-gray-800 truncate">
                                   {r.venue}
                                 </td>
                                 <td className="py-2 px-3 font-mono">
@@ -649,31 +741,46 @@ export function PreviewPanel(props: {
                                 <td className="py-2 px-3 font-mono">
                                   {r.time}
                                 </td>
-                                {weekNums.map((w) => {
+
+                                {visibleWeekCols.map((w, i) => {
+                                  if (!w) {
+                                    return (
+                                      <td
+                                        key={`empty-${i}`}
+                                        className="py-2 px-3 text-gray-200"
+                                      >
+                                        &nbsp;
+                                      </td>
+                                    );
+                                  }
+
                                   const cell = byWeek.get(w) || {
                                     bySlot: new Map(),
                                     bye: null,
                                   };
                                   const p = cell.bySlot.get(r.key);
-                                  if (!p)
+                                  if (!p) {
                                     return (
                                       <td
                                         key={w}
-                                        className="py-2 px-3 text-gray-400"
+                                        className="py-2 px-3 text-gray-400 font-mono tabular-nums"
                                       >
                                         -
                                       </td>
                                     );
+                                  }
+
                                   const label = `${teamNum(p.home)} v ${teamNum(
                                     p.away
                                   )}`;
                                   const tip = `${displayName(
                                     p.home
                                   )} vs ${displayName(p.away)}`;
+
                                   return (
                                     <td
                                       key={w}
-                                      className="py-2 px-3 font-mono"
+                                      className="py-2 px-3 font-mono tabular-nums"
                                       title={tip}
                                     >
                                       {label}
@@ -689,24 +796,38 @@ export function PreviewPanel(props: {
                               </td>
                               <td className="py-2 px-3" />
                               <td className="py-2 px-3" />
-                              {weekNums.map((w) => {
+
+                              {visibleWeekCols.map((w, i) => {
+                                if (!w) {
+                                  return (
+                                    <td
+                                      key={`empty-bye-${i}`}
+                                      className="py-2 px-3 text-gray-200"
+                                    >
+                                      &nbsp;
+                                    </td>
+                                  );
+                                }
+
                                 const cell = byWeek.get(w) || {
                                   bySlot: new Map(),
                                   bye: null,
                                 };
-                                if (!cell.bye)
+                                if (!cell.bye) {
                                   return (
                                     <td
                                       key={w}
-                                      className="py-2 px-3 text-gray-400"
+                                      className="py-2 px-3 text-gray-400 font-mono tabular-nums"
                                     >
                                       -
                                     </td>
                                   );
+                                }
+
                                 return (
                                   <td
                                     key={w}
-                                    className="py-2 px-3 font-mono"
+                                    className="py-2 px-3 font-mono tabular-nums"
                                     title={displayName(cell.bye)}
                                   >
                                     {teamNum(cell.bye)}
@@ -724,7 +845,7 @@ export function PreviewPanel(props: {
           </div>
         ) : previewTab === "netheights" ? (
           <div className="space-y-6">
-            {weekNums.map((w) => {
+            {visibleWeekNums.map((w) => {
               const byCourt = planByWeekCourt.get(w) || new Map();
 
               return (
@@ -753,7 +874,10 @@ export function PreviewPanel(props: {
                       ).trim()}`;
                       const byTime =
                         byCourt.get(courtKey) ||
-                        new Map<string, { division: string; heightM: number }>();
+                        new Map<
+                          string,
+                          { division: string; heightM: number }
+                        >();
 
                       return (
                         <div
@@ -835,6 +959,7 @@ export function PreviewPanel(props: {
         ) : (
           <ClashGroupsView
             weeks={Number(weeks)}
+            weekNums={visibleWeekNums}
             schedule={schedule}
             clashes={clashes}
             displayName={displayName}
