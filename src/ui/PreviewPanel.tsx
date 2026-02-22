@@ -8,6 +8,7 @@ import type {
 } from "../lib/types";
 import { teamNum } from "../lib/ids";
 import { computeNetHeightChanges } from "../lib/netHeights";
+import { computeOpponentVariety } from "../lib/scheduling";
 import { formatTimeLabel, toHHMM } from "../lib/time";
 
 // --- Clash groups tab: timeslots rows × weeks columns (with team colours) ---
@@ -348,14 +349,288 @@ function ClashGroupsView(props: {
   );
 }
 
+// --- Opponent variety tab ----------------------------------------------------
+
+function pct01(x: number, digits = 0) {
+  const v = Number.isFinite(x) ? x : 0;
+  return (v * 100).toFixed(digits) + "%";
+}
+
+function OpponentVarietyView(props: {
+  schedule: Match[];
+  teamsByDivision: Map<string, string[]>;
+  displayName: (id: string) => string;
+}) {
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(
+    () => new Set()
+  );
+
+  function toggleExpanded(teamId: string) {
+    setExpandedTeams((prev) => {
+      const next = new Set(prev);
+      if (next.has(teamId)) next.delete(teamId);
+      else next.add(teamId);
+      return next;
+    });
+  }
+  const { schedule, teamsByDivision, displayName } = props;
+
+  const data = useMemo(
+    () => computeOpponentVariety({ schedule, teamsByDivision }),
+    [schedule, teamsByDivision]
+  );
+
+  const overall = useMemo(() => {
+    const ratios = (data.teams || []).map((r: any) =>
+      Number(r.varietyRatio || 0)
+    );
+    const avg = ratios.length
+      ? ratios.reduce((s: number, x: number) => s + x, 0) / ratios.length
+      : 1;
+    const min = ratios.length ? Math.min(...ratios) : 1;
+    return { avg, min };
+  }, [data.teams]);
+
+  const rowsByDiv = useMemo(() => {
+    const m = new Map<string, any[]>();
+    for (const r of data.teams || []) {
+      const d = String((r as any).division || "");
+      if (!m.has(d)) m.set(d, []);
+      m.get(d)!.push(r);
+    }
+    for (const [d, arr] of m.entries()) {
+      arr.sort((a, b) => String(a.teamId).localeCompare(String(b.teamId)));
+      m.set(d, arr);
+    }
+    return m;
+  }, [data.teams]);
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-gray-200 bg-white p-4">
+        <div className="text-sm font-semibold">Opponent variety</div>
+        <div className="mt-1 text-xs text-gray-600">
+          Variety ={" "}
+          <span className="font-mono">
+            uniqueOpponents / min(gamesPlayed, teamsInDivision-1)
+          </span>
+          . 100% means the team achieved the maximum possible variety given
+          their number of games.
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="rounded-xl border border-gray-200 p-3">
+            <div className="text-xs text-gray-600">Overall average</div>
+            <div className="text-lg font-semibold">{pct01(overall.avg, 0)}</div>
+            <div className="mt-2 h-2 rounded bg-gray-100">
+              <div
+                className="h-2 rounded bg-black"
+                style={{ width: pct01(overall.avg, 0) }}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 p-3">
+            <div className="text-xs text-gray-600">Worst team</div>
+            <div className="text-lg font-semibold">{pct01(overall.min, 0)}</div>
+            <div className="mt-2 h-2 rounded bg-gray-100">
+              <div
+                className="h-2 rounded bg-black"
+                style={{ width: pct01(overall.min, 0) }}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 p-3">
+            <div className="text-xs text-gray-600">Tip</div>
+            <div className="text-xs text-gray-700 mt-1">
+              Lower scores = repeated opponents (what you want to minimise).
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {(data.byDivision || []).map((s: any) => (
+          <div
+            key={s.division}
+            className="rounded-2xl border border-gray-200 bg-white p-4"
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold">{s.division}</div>
+              <div className="text-xs text-gray-600">
+                Teams: <span className="font-medium">{s.teams}</span> · Possible
+                opponents/team: {s.possibleOpponents}
+              </div>
+            </div>
+
+            <div className="mt-2 grid grid-cols-3 gap-2 text-sm">
+              <div>
+                <div className="text-xs text-gray-600">Avg</div>
+                <div className="font-semibold">
+                  {pct01(s.avgVarietyRatio, 0)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-600">Min</div>
+                <div className="font-semibold">
+                  {pct01(s.minVarietyRatio, 0)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-600">Max</div>
+                <div className="font-semibold">
+                  {pct01(s.maxVarietyRatio, 0)}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="overflow-auto rounded-2xl border border-gray-200 bg-white">
+        <table className="min-w-[900px] w-full text-sm">
+          <thead className="sticky top-0 bg-white">
+            <tr className="text-left text-xs text-gray-600 border-b border-gray-200">
+              <th className="py-2 px-3">Division</th>
+              <th className="py-2 px-3">Team</th>
+              <th className="py-2 px-3">Games</th>
+              <th className="py-2 px-3">Unique opp.</th>
+              <th className="py-2 px-3">Max unique</th>
+              <th className="py-2 px-3">Variety</th>
+              <th className="py-2 px-3">Repeats</th>
+              <th className="py-2 px-3">Opponents</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {Array.from(rowsByDiv.entries())
+              .sort(([a], [b]) => a.localeCompare(b))
+              .flatMap(([div, rows]) =>
+                (rows || []).map((r: any) => {
+                  const variety = Number(r.varietyRatio || 0);
+                  const repeats = Number(r.repeatGames || 0);
+                  const repeatOpps = (r.opponentCounts || []).filter(
+                    (x: any) => Number(x.count) > 1
+                  );
+
+                  const isExpanded = expandedTeams.has(r.teamId);
+                  const oppsAll = r.opponentCounts || [];
+                  const oppsShown = isExpanded ? oppsAll : oppsAll.slice(0, 8);
+
+                  return (
+                    <tr
+                      key={r.teamId}
+                      className="border-t border-gray-100 hover:bg-gray-50 align-top"
+                    >
+                      <td className="py-2 px-3 font-mono">{div}</td>
+
+                      <td className="py-2 px-3">
+                        <div className="font-mono">{r.teamId}</div>
+                        <div className="text-xs text-gray-600">
+                          {teamNum(r.teamId)}. {displayName(r.teamId)}
+                        </div>
+                      </td>
+
+                      <td className="py-2 px-3 font-mono">{r.games}</td>
+                      <td className="py-2 px-3 font-mono">
+                        {r.uniqueOpponents}
+                      </td>
+                      <td className="py-2 px-3 font-mono">
+                        {r.maxUniquePossible}
+                      </td>
+
+                      <td className="py-2 px-3">
+                        <div className="font-mono">{pct01(variety, 0)}</div>
+                        <div className="mt-1 h-2 rounded bg-gray-100">
+                          <div
+                            className="h-2 rounded bg-black"
+                            style={{ width: pct01(variety, 0) }}
+                          />
+                        </div>
+                      </td>
+
+                      <td className="py-2 px-3">
+                        <div className="font-mono">{repeats}</div>
+                        {repeatOpps.length > 0 ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {repeatOpps.slice(0, 4).map((x: any) => (
+                              <span
+                                key={x.opponent}
+                                className="inline-flex items-center rounded-full border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-mono"
+                                title={`${displayName(
+                                  r.teamId
+                                )} played ${displayName(x.opponent)} ${
+                                  x.count
+                                } times`}
+                              >
+                                {x.opponent}×{x.count}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-xs text-gray-500">—</div>
+                        )}
+                      </td>
+
+                      <td className="py-2 px-3">
+                        {oppsAll.length === 0 ? (
+                          <div className="text-xs text-gray-500">—</div>
+                        ) : (
+                          <>
+                            <div className="flex flex-wrap gap-1">
+                              {oppsShown.map((x: any) => (
+                                <span
+                                  key={x.opponent}
+                                  className="inline-flex items-center rounded-full border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-mono"
+                                  title={`${displayName(
+                                    r.teamId
+                                  )} played ${displayName(x.opponent)} ${
+                                    x.count
+                                  } time(s)`}
+                                >
+                                  {x.opponent}×{x.count}
+                                </span>
+                              ))}
+                              {!isExpanded &&
+                              oppsAll.length > oppsShown.length ? (
+                                <span className="text-[11px] text-gray-500">
+                                  +{oppsAll.length - oppsShown.length} more
+                                </span>
+                              ) : null}
+                            </div>
+
+                            {oppsAll.length > 8 ? (
+                              <button
+                                type="button"
+                                className="mt-2 text-[11px] text-blue-700 hover:underline"
+                                onClick={() => toggleExpanded(r.teamId)}
+                              >
+                                {isExpanded ? "Show less" : "Show all"}
+                              </button>
+                            ) : null}
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function PreviewPanel(props: {
   weeks: number;
   divisions: Division[];
   schedule: Match[];
 
-  previewTab: "division" | "netheights" | "clashes";
+  previewTab: "division" | "netheights" | "clashes" | "variety";
   setPreviewTab: React.Dispatch<
-    React.SetStateAction<"division" | "netheights" | "clashes">
+    React.SetStateAction<"division" | "netheights" | "clashes" | "variety">
   >;
 
   divisionGrid: DivisionGrid;
@@ -417,8 +692,6 @@ export function PreviewPanel(props: {
   useEffect(() => {
     setWeekPage((p) => Math.min(p, Math.max(0, totalPages - 1)));
   }, [totalPages]);
-
-  const weekNums = Array.from({ length: Number(weeks) }, (_, i) => i + 1);
 
   const netChanges = useMemo(
     () => computeNetHeightChanges({ schedule, divisions, timeslots }),
@@ -577,6 +850,18 @@ export function PreviewPanel(props: {
               Clash groups
             </button>
 
+            <button
+              className={`rounded-lg px-3 py-1 text-xs border ${
+                previewTab === "variety"
+                  ? "bg-black text-white border-black"
+                  : "bg-white border-gray-300 hover:bg-gray-50"
+              }`}
+              onClick={() => setPreviewTab("variety")}
+              title="How often teams repeat opponents"
+            >
+              Opponent variety
+            </button>
+
             {/* Net summary box */}
             <div className="ml-auto w-full md:w-auto mt-3 md:mt-0 rounded-xl border border-gray-200 bg-white p-3">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-700">
@@ -603,6 +888,7 @@ export function PreviewPanel(props: {
             </div>
           </div>
         </div>
+
         {totalWeeks > PAGE_SIZE ? (
           <div className="shrink-0 self-start md:ml-4">
             <div className="grid grid-cols-[76px_76px_170px] items-center gap-2">
@@ -956,6 +1242,12 @@ export function PreviewPanel(props: {
               );
             })}
           </div>
+        ) : previewTab === "variety" ? (
+          <OpponentVarietyView
+            schedule={schedule}
+            teamsByDivision={teamsByDivision}
+            displayName={displayName}
+          />
         ) : (
           <ClashGroupsView
             weeks={Number(weeks)}

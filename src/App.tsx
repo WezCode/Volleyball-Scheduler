@@ -287,7 +287,7 @@ export default function App() {
 
   const [schedule, setSchedule] = useState<Match[]>([]);
   const [previewTab, setPreviewTab] = useState<
-    "division" | "netheights" | "clashes"
+    "division" | "netheights" | "clashes" | "variety"
   >("division");
   const [mainTab, setMainTab] = useState<"config" | "teams" | "preview">(
     "config"

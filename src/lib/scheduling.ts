@@ -1,5 +1,11 @@
 // lib/scheduling.ts
-import type { Division, DivisionGrid, DivisionStats, Match, Venue } from "./types";
+import type {
+  Division,
+  DivisionGrid,
+  DivisionStats,
+  Match,
+  Venue,
+} from "./types";
 import { pad2 } from "./ids";
 import { buildSlotList } from "./slots";
 
@@ -35,16 +41,57 @@ export function generatePairings(params: {
     teamsByDiv.set(code, arr);
   }
 
-  const matches: Match[] = [];
-  for (let w = 1; w <= weeks; w++) {
-    for (const [div, divTeams] of teamsByDiv.entries()) {
-      const rot = divTeams.slice(w - 1).concat(divTeams.slice(0, w - 1));
+  // Standard round-robin "circle method" per division.
+  // This maximises opponent variety: until a full cycle completes, no team repeats an opponent.
+  function buildRounds(teamIds: string[]): Array<Array<[string, string]>> {
+    const teams = teamIds.slice();
+    if (teams.length % 2 === 1) teams.push("BYE");
+    const n = teams.length;
+    if (n < 2) return [];
 
-      for (let i = 0; i < rot.length - 1; i += 2) {
-        matches.push({ week: w, division: div, home: rot[i], away: rot[i + 1] });
+    const rounds = n - 1;
+    const fixed = teams[0];
+    let rot = teams.slice(1);
+
+    const out: Array<Array<[string, string]>> = [];
+
+    for (let r = 0; r < rounds; r++) {
+      const order = [fixed, ...rot];
+      const pairs: Array<[string, string]> = [];
+
+      for (let i = 0; i < n / 2; i++) {
+        const a = order[i];
+        const b = order[n - 1 - i];
+        pairs.push([a, b]);
       }
-      if (rot.length % 2 === 1) {
-        matches.push({ week: w, division: div, home: rot[rot.length - 1], away: "BYE" });
+
+      out.push(pairs);
+
+      // rotate: move last element to position 0
+      if (rot.length > 1) rot = [rot[rot.length - 1], ...rot.slice(0, -1)];
+    }
+
+    return out;
+  }
+
+  const matches: Match[] = [];
+
+  for (const [div, divTeams] of teamsByDiv.entries()) {
+    const rounds = buildRounds(divTeams);
+    if (rounds.length === 0) continue;
+
+    for (let w = 1; w <= weeks; w++) {
+      const pairs = rounds[(w - 1) % rounds.length];
+
+      for (const [a, b] of pairs) {
+        if (a === "BYE" && b === "BYE") continue;
+
+        if (a === "BYE" || b === "BYE") {
+          const team = a === "BYE" ? b : a;
+          matches.push({ week: w, division: div, home: team, away: "BYE" });
+        } else {
+          matches.push({ week: w, division: div, home: a, away: b });
+        }
       }
     }
   }
@@ -239,14 +286,18 @@ export function placeMatches(
 
 export function buildDivisionGrid(schedule: Match[]): DivisionGrid {
   const byDiv = new Map<string, Map<number, any>>();
-  const unassigned = new Map<string, Map<number, { home: string; away: string }[]>>();
+  const unassigned = new Map<
+    string,
+    Map<number, { home: string; away: string }[]>
+  >();
 
   for (const m of schedule) {
     if (!byDiv.has(m.division)) byDiv.set(m.division, new Map());
     if (!unassigned.has(m.division)) unassigned.set(m.division, new Map());
 
     const byWeek = byDiv.get(m.division)!;
-    if (!byWeek.has(m.week)) byWeek.set(m.week, { bySlot: new Map(), bye: null });
+    if (!byWeek.has(m.week))
+      byWeek.set(m.week, { bySlot: new Map(), bye: null });
     const cell = byWeek.get(m.week)!;
 
     if (m.away === "BYE") {
@@ -266,17 +317,26 @@ export function buildDivisionGrid(schedule: Match[]): DivisionGrid {
     }
 
     const slotKey = venue + "__" + court + "__" + time;
-    cell.bySlot.set(slotKey, { home: m.home, away: m.away, venue, court, time });
+    cell.bySlot.set(slotKey, {
+      home: m.home,
+      away: m.away,
+      venue,
+      court,
+      time,
+    });
   }
 
   return { byDiv, unassigned };
 }
 
-export function buildDivisionStats(schedule: Match[]): Map<string, DivisionStats> {
+export function buildDivisionStats(
+  schedule: Match[]
+): Map<string, DivisionStats> {
   const map = new Map<string, DivisionStats>();
 
   for (const m of schedule) {
-    if (!map.has(m.division)) map.set(m.division, { games: 0, byes: 0, unassigned: 0 });
+    if (!map.has(m.division))
+      map.set(m.division, { games: 0, byes: 0, unassigned: 0 });
     const s = map.get(m.division)!;
 
     if (m.away === "BYE") s.byes += 1;
@@ -287,4 +347,148 @@ export function buildDivisionStats(schedule: Match[]): Map<string, DivisionStats
   }
 
   return map;
+}
+
+export type OpponentVarietyTeam = {
+  teamId: string;
+  division: string;
+  games: number;
+  uniqueOpponents: number;
+  possibleOpponents: number; // teams in division - 1
+  maxUniquePossible: number; // min(games, possibleOpponents)
+  varietyRatio: number; // 0..1
+  repeatGames: number; // games - uniqueOpponents
+  opponentCounts: Array<{ opponent: string; count: number }>;
+};
+
+export type OpponentVarietyDivisionSummary = {
+  division: string;
+  teams: number;
+  possibleOpponents: number;
+  avgVarietyRatio: number;
+  minVarietyRatio: number;
+  maxVarietyRatio: number;
+};
+
+export function computeOpponentVariety(params: {
+  schedule: Match[];
+  teamsByDivision: Map<string, string[]>;
+}): {
+  teams: OpponentVarietyTeam[];
+  byDivision: OpponentVarietyDivisionSummary[];
+} {
+  const { schedule, teamsByDivision } = params;
+
+  const teamToDiv = new Map<string, string>();
+  for (const [div, ids] of teamsByDivision.entries()) {
+    for (const id of ids || []) teamToDiv.set(id, div);
+  }
+
+  const base = new Map<
+    string,
+    { division: string; games: number; opponents: Map<string, number> }
+  >();
+
+  for (const [div, ids] of teamsByDivision.entries()) {
+    for (const id of ids || [])
+      base.set(id, { division: div, games: 0, opponents: new Map() });
+  }
+
+  for (const m of schedule || []) {
+    if (m.away === "BYE") continue;
+    const home = String(m.home || "").trim();
+    const away = String(m.away || "").trim();
+    if (!home || !away) continue;
+
+    const div = String(m.division || "").trim();
+
+    if (!base.has(home))
+      base.set(home, {
+        division: teamToDiv.get(home) || div || "",
+        games: 0,
+        opponents: new Map(),
+      });
+    if (!base.has(away))
+      base.set(away, {
+        division: teamToDiv.get(away) || div || "",
+        games: 0,
+        opponents: new Map(),
+      });
+
+    const h = base.get(home)!;
+    const a = base.get(away)!;
+
+    h.games += 1;
+    a.games += 1;
+    h.opponents.set(away, (h.opponents.get(away) || 0) + 1);
+    a.opponents.set(home, (a.opponents.get(home) || 0) + 1);
+  }
+
+  const teams: OpponentVarietyTeam[] = [];
+  for (const [teamId, st] of base.entries()) {
+    const div = st.division || teamToDiv.get(teamId) || "";
+    const divTeams = teamsByDivision.get(div) || [];
+    const possibleOpponents = Math.max(0, divTeams.length - 1);
+
+    const games = st.games;
+    const uniqueOpponents = st.opponents.size;
+    const maxUniquePossible = Math.min(games, possibleOpponents);
+    const varietyRatio =
+      maxUniquePossible > 0 ? uniqueOpponents / maxUniquePossible : 1;
+    const repeatGames = Math.max(0, games - uniqueOpponents);
+
+    const opponentCounts = Array.from(st.opponents.entries())
+      .map(([opponent, count]) => ({ opponent, count }))
+      .sort(
+        (x, y) => y.count - x.count || x.opponent.localeCompare(y.opponent)
+      );
+
+    teams.push({
+      teamId,
+      division: div,
+      games,
+      uniqueOpponents,
+      possibleOpponents,
+      maxUniquePossible,
+      varietyRatio,
+      repeatGames,
+      opponentCounts,
+    });
+  }
+
+  teams.sort(
+    (a, b) =>
+      a.division.localeCompare(b.division) || a.teamId.localeCompare(b.teamId)
+  );
+
+  const byDivision: OpponentVarietyDivisionSummary[] = [];
+  const divGroups = new Map<string, OpponentVarietyTeam[]>();
+  for (const t of teams) {
+    if (!divGroups.has(t.division)) divGroups.set(t.division, []);
+    divGroups.get(t.division)!.push(t);
+  }
+
+  for (const [div, rows] of divGroups.entries()) {
+    const teamsCount = (teamsByDivision.get(div) || []).length;
+    const possibleOpponents = Math.max(0, teamsCount - 1);
+    const ratios = rows.map((r) => r.varietyRatio);
+
+    const avg = ratios.length
+      ? ratios.reduce((s, x) => s + x, 0) / ratios.length
+      : 1;
+    const min = ratios.length ? Math.min(...ratios) : 1;
+    const max = ratios.length ? Math.max(...ratios) : 1;
+
+    byDivision.push({
+      division: div,
+      teams: teamsCount,
+      possibleOpponents,
+      avgVarietyRatio: avg,
+      minVarietyRatio: min,
+      maxVarietyRatio: max,
+    });
+  }
+
+  byDivision.sort((a, b) => a.division.localeCompare(b.division));
+  return { teams, byDivision };
 }
