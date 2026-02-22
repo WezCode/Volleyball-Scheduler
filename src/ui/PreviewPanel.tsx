@@ -661,6 +661,7 @@ export function PreviewPanel(props: {
 
   const PAGE_SIZE = 5;
   const [weekPage, setWeekPage] = useState(0);
+  const [hoverTeamId, setHoverTeamId] = useState<string | null>(null);
 
   const totalWeeks = Number(weeks) || 0;
   const totalPages = Math.max(1, Math.ceil(totalWeeks / PAGE_SIZE));
@@ -949,6 +950,39 @@ export function PreviewPanel(props: {
                   return false;
                 });
 
+                const hoverId =
+                  hoverTeamId &&
+                  (teamsByDivision.get(div) || []).includes(hoverTeamId)
+                    ? hoverTeamId
+                    : null;
+
+                const rowHasTeam = new Set<string>(); // slotRow key
+                const colHasTeam = new Set<number>(); // week number
+                const byeHasTeam = new Set<number>(); // week number where this team is BYE
+
+                if (hoverId) {
+                  for (const w of visibleWeekCols) {
+                    if (!w) continue;
+                    const cell = byWeek.get(w);
+                    if (!cell) continue;
+
+                    if (cell.bye === hoverId) {
+                      colHasTeam.add(w);
+                      byeHasTeam.add(w);
+                    }
+
+                    for (const [slotKey, p] of (
+                      cell.bySlot || new Map()
+                    ).entries()) {
+                      if (!p) continue;
+                      if (p.home === hoverId || p.away === hoverId) {
+                        rowHasTeam.add(slotKey);
+                        colHasTeam.add(w);
+                      }
+                    }
+                  }
+                }
+
                 return (
                   <div
                     key={div}
@@ -972,17 +1006,30 @@ export function PreviewPanel(props: {
 
                     <div className="bg-white p-4">
                       <div className="mb-3 grid grid-cols-1 md:grid-cols-3 gap-2">
-                        {(teamsByDivision.get(div) || []).map((id) => (
-                          <div key={id} className="text-xs">
-                            <span className="font-mono font-semibold">
-                              {teamNum(id)}.
-                            </span>{" "}
-                            <span>{displayName(id)}</span>
-                          </div>
-                        ))}
+                        {(teamsByDivision.get(div) || []).map((id) => {
+                          const active = hoverTeamId === id;
+                          return (
+                            <div
+                              key={id}
+                              onMouseEnter={() => setHoverTeamId(id)}
+                              className={`text-xs rounded px-1 py-0.5 cursor-pointer ${
+                                active ? "bg-yellow-100" : "hover:bg-yellow-50"
+                              }`}
+                              title="Hover to highlight this team in the grid"
+                            >
+                              <span className="font-mono font-semibold">
+                                {teamNum(id)}.
+                              </span>{" "}
+                              <span>{displayName(id)}</span>
+                            </div>
+                          );
+                        })}
                       </div>
 
-                      <div className="overflow-auto rounded-xl border border-gray-200">
+                      <div
+                        className="overflow-auto rounded-xl border border-gray-200"
+                        onMouseLeave={() => setHoverTeamId(null)}
+                      >
                         <table className="min-w-[980px] w-full text-sm table-fixed">
                           <colgroup>
                             <col style={{ width: 220 }} /> {/* Venue */}
@@ -1004,7 +1051,11 @@ export function PreviewPanel(props: {
                               {visibleWeekCols.map((w, i) => (
                                 <th
                                   key={w ?? `empty-${i}`}
-                                  className="py-2 px-3 font-mono tabular-nums"
+                                  className={`py-2 px-3 font-mono tabular-nums ${
+                                    w && hoverId && colHasTeam.has(w)
+                                      ? "bg-yellow-50"
+                                      : ""
+                                  }`}
                                 >
                                   {w ? `Week ${w}` : ""}
                                 </th>
@@ -1018,22 +1069,51 @@ export function PreviewPanel(props: {
                                 key={r.key}
                                 className="border-t border-gray-100"
                               >
-                                <td className="py-2 px-3 text-xs font-medium text-gray-800 truncate">
+                                <td
+                                  className={`py-2 px-3 text-xs font-medium text-gray-800 truncate ${
+                                    hoverId && rowHasTeam.has(r.key)
+                                      ? "bg-yellow-50"
+                                      : ""
+                                  }`}
+                                >
                                   {r.venue}
                                 </td>
-                                <td className="py-2 px-3 font-mono">
+                                <td
+                                  className={`py-2 px-3 font-mono ${
+                                    hoverId && rowHasTeam.has(r.key)
+                                      ? "bg-yellow-50"
+                                      : ""
+                                  }`}
+                                >
                                   {r.court}
                                 </td>
-                                <td className="py-2 px-3 font-mono">
+                                <td
+                                  className={`py-2 px-3 font-mono ${
+                                    hoverId && rowHasTeam.has(r.key)
+                                      ? "bg-yellow-50"
+                                      : ""
+                                  }`}
+                                >
                                   {r.time}
                                 </td>
 
                                 {visibleWeekCols.map((w, i) => {
+                                  const rowHighlight = !!(
+                                    hoverId && rowHasTeam.has(r.key)
+                                  );
+                                  const colHighlight = !!(
+                                    w &&
+                                    hoverId &&
+                                    colHasTeam.has(w)
+                                  );
+
                                   if (!w) {
                                     return (
                                       <td
                                         key={`empty-${i}`}
-                                        className="py-2 px-3 text-gray-200"
+                                        className={`py-2 px-3 text-gray-200 ${
+                                          rowHighlight ? "bg-yellow-50" : ""
+                                        }`}
                                       >
                                         &nbsp;
                                       </td>
@@ -1045,20 +1125,27 @@ export function PreviewPanel(props: {
                                     bye: null,
                                   };
                                   const p = cell.bySlot.get(r.key);
+
                                   if (!p) {
                                     return (
                                       <td
                                         key={w}
-                                        className="py-2 px-3 text-gray-400 font-mono tabular-nums"
+                                        className={`py-2 px-3 text-gray-400 font-mono tabular-nums transition-colors ${
+                                          rowHighlight || colHighlight
+                                            ? "bg-yellow-50"
+                                            : ""
+                                        }`}
                                       >
                                         -
                                       </td>
                                     );
                                   }
 
-                                  const label = `${teamNum(p.home)} v ${teamNum(
-                                    p.away
-                                  )}`;
+                                  const cellHasTeam = !!(
+                                    hoverId &&
+                                    (p.home === hoverId || p.away === hoverId)
+                                  );
+
                                   const tip = `${displayName(
                                     p.home
                                   )} vs ${displayName(p.away)}`;
@@ -1066,10 +1153,42 @@ export function PreviewPanel(props: {
                                   return (
                                     <td
                                       key={w}
-                                      className="py-2 px-3 font-mono tabular-nums"
+                                      className={`py-2 px-3 font-mono tabular-nums transition-colors ${
+                                        rowHighlight || colHighlight
+                                          ? "bg-yellow-50"
+                                          : ""
+                                      } ${
+                                        cellHasTeam
+                                          ? "bg-yellow-200 font-semibold"
+                                          : ""
+                                      }`}
                                       title={tip}
                                     >
-                                      {label}
+                                      <span
+                                        className={`cursor-pointer rounded px-1 ${
+                                          hoverTeamId === p.home
+                                            ? "bg-yellow-300"
+                                            : "hover:bg-yellow-100"
+                                        }`}
+                                        onMouseEnter={() =>
+                                          setHoverTeamId(p.home)
+                                        }
+                                      >
+                                        {teamNum(p.home)}
+                                      </span>
+                                      <span className="text-gray-500"> v </span>
+                                      <span
+                                        className={`cursor-pointer rounded px-1 ${
+                                          hoverTeamId === p.away
+                                            ? "bg-yellow-300"
+                                            : "hover:bg-yellow-100"
+                                        }`}
+                                        onMouseEnter={() =>
+                                          setHoverTeamId(p.away)
+                                        }
+                                      >
+                                        {teamNum(p.away)}
+                                      </span>
                                     </td>
                                   );
                                 })}
@@ -1095,28 +1214,57 @@ export function PreviewPanel(props: {
                                   );
                                 }
 
+                                const colHighlight = !!(
+                                  hoverId && colHasTeam.has(w)
+                                );
+                                const cellHasTeam = !!(
+                                  hoverId && byeHasTeam.has(w)
+                                );
+
                                 const cell = byWeek.get(w) || {
                                   bySlot: new Map(),
                                   bye: null,
                                 };
+
+                                // if no BYE this week
                                 if (!cell.bye) {
                                   return (
                                     <td
                                       key={w}
-                                      className="py-2 px-3 text-gray-400 font-mono tabular-nums"
+                                      className={`py-2 px-3 text-gray-400 font-mono tabular-nums ${
+                                        colHighlight ? "bg-yellow-50" : ""
+                                      }`}
                                     >
                                       -
                                     </td>
                                   );
                                 }
 
+                                // there IS a BYE team this week
                                 return (
                                   <td
                                     key={w}
-                                    className="py-2 px-3 font-mono tabular-nums"
+                                    className={`py-2 px-3 font-mono tabular-nums ${
+                                      colHighlight ? "bg-yellow-50" : ""
+                                    } ${
+                                      cellHasTeam
+                                        ? "bg-yellow-200 font-semibold"
+                                        : ""
+                                    }`}
                                     title={displayName(cell.bye)}
                                   >
-                                    {teamNum(cell.bye)}
+                                    <span
+                                      className={`cursor-pointer rounded px-1 ${
+                                        hoverTeamId === cell.bye
+                                          ? "bg-yellow-300"
+                                          : "hover:bg-yellow-100"
+                                      }`}
+                                      onMouseEnter={() =>
+                                        setHoverTeamId(cell.bye)
+                                      }
+                                    >
+                                      {teamNum(cell.bye)}
+                                    </span>
                                   </td>
                                 );
                               })}
