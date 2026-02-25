@@ -33,7 +33,10 @@ export type SlotRow = {
 };
 
 export type DivisionWeekCell = {
-  bySlot: Map<string, { home: string; away: string; venue: string; court: string; time: string }>;
+  bySlot: Map<
+    string,
+    { home: string; away: string; venue: string; court: string; time: string }
+  >;
   bye: string | null;
 };
 
@@ -44,10 +47,30 @@ export type DivisionGrid = {
 
 export type DivisionStats = { games: number; byes: number; unassigned: number };
 
+export const TIME_PREF_BUCKETS = [
+  "preferred",
+  "notPreferred",
+  "unavailable",
+] as const;
+
+export type TimePrefBucket = (typeof TIME_PREF_BUCKETS)[number];
+
 export type TeamTimePrefs = Record<
   string,
   {
     preferred?: string[];
+    notPreferred?: string[];
+    unavailable?: string[];
+
+    // Legacy keys (optional, for old snapshots)
     avoid?: string[];
+    strict?: string[];
   }
 >;
+
+export type PreviewTabKey =
+  | "division"
+  | "netheights"
+  | "clashes"
+  | "variety"
+  | "timeprefs";

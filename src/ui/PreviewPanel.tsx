@@ -4,7 +4,9 @@ import type {
   DivisionGrid,
   DivisionStats,
   Match,
+  PreviewTabKey,
   SlotRow,
+  TeamTimePrefs,
 } from "../lib/types";
 import { teamNum } from "../lib/ids";
 import { computeNetHeightChanges } from "../lib/netHeights";
@@ -628,10 +630,8 @@ export function PreviewPanel(props: {
   divisions: Division[];
   schedule: Match[];
 
-  previewTab: "division" | "netheights" | "clashes" | "variety";
-  setPreviewTab: React.Dispatch<
-    React.SetStateAction<"division" | "netheights" | "clashes" | "variety">
-  >;
+  previewTab: PreviewTabKey;
+  setPreviewTab: React.Dispatch<React.SetStateAction<PreviewTabKey>>;
 
   divisionGrid: DivisionGrid;
   divisionStats: Map<string, DivisionStats>;
@@ -640,6 +640,7 @@ export function PreviewPanel(props: {
   displayName: (id: string) => string;
   groupedByWeek: Map<number, Match[]>;
   timeslots: string[];
+  teamTimePrefs: TeamTimePrefs;
 
   clashes: Array<[string, string]>;
 }) {
@@ -657,6 +658,7 @@ export function PreviewPanel(props: {
     groupedByWeek,
     timeslots,
     clashes,
+    teamTimePrefs,
   } = props;
 
   const PAGE_SIZE = 5;
@@ -805,6 +807,221 @@ export function PreviewPanel(props: {
     console.log("DEBUG byTime keys (times in schedule):", [...byTime.keys()]);
   }, [timeslots, schedule, planByWeekCourt]);
 
+  const timePrefStats = React.useMemo(() => {
+    const prefs = teamTimePrefs || {};
+
+    // team -> Set(times they played)
+    const playedByTeam = new Map<string, Set<string>>();
+    const addPlayed = (teamId: string, time: string) => {
+      if (!teamId || !time) return;
+      if (!playedByTeam.has(teamId)) playedByTeam.set(teamId, new Set());
+      playedByTeam.get(teamId)!.add(time);
+    };
+
+    for (const m of schedule || []) {
+      if (!m || m.away === "BYE") continue;
+      const time = String(m.time || "").trim();
+      if (!time) continue; // ignore unassigned
+      addPlayed(String(m.home || "").trim(), time);
+      addPlayed(String(m.away || "").trim(), time);
+    }
+
+    let totalPrefs = 0;
+    let teamsWithPrefs = 0;
+    let perfectTeams = 0;
+
+    let preferredTotal = 0,
+      preferredHit = 0;
+
+    let notPrefTotal = 0,
+      notPrefOk = 0,
+      notPrefViol = 0;
+
+    let unavailTotal = 0,
+      unavailOk = 0,
+      unavailViol = 0;
+
+    for (const [teamId, cfg] of Object.entries(prefs)) {
+      const preferred = (cfg.preferred || []).map(String);
+      const notPreferred = (cfg.notPreferred || []).map(String);
+      const unavailable = (cfg.unavailable || []).map(String);
+
+      const hasAny =
+        preferred.length + notPreferred.length + unavailable.length > 0;
+      if (!hasAny) continue;
+
+      teamsWithPrefs += 1;
+      totalPrefs += preferred.length + notPreferred.length + unavailable.length;
+
+      const played = playedByTeam.get(teamId) || new Set<string>();
+
+      const pHit = preferred.filter((t) => played.has(t)).length;
+      const pMiss = preferred.length - pHit;
+
+      const npViol = notPreferred.filter((t) => played.has(t)).length;
+      const npOk = notPreferred.length - npViol;
+
+      const uViol = unavailable.filter((t) => played.has(t)).length;
+      const uOk = unavailable.length - uViol;
+
+      preferredTotal += preferred.length;
+      preferredHit += pHit;
+
+      notPrefTotal += notPreferred.length;
+      notPrefOk += npOk;
+      notPrefViol += npViol;
+
+      unavailTotal += unavailable.length;
+      unavailOk += uOk;
+      unavailViol += uViol;
+
+      const isPerfect = pMiss === 0 && npViol === 0 && uViol === 0;
+      if (isPerfect) perfectTeams += 1;
+    }
+
+    return {
+      totalPrefs,
+      teamsWithPrefs,
+      perfectTeams,
+      preferredTotal,
+      preferredHit,
+      notPrefTotal,
+      notPrefOk,
+      notPrefViol,
+      unavailTotal,
+      unavailOk,
+      unavailViol,
+    };
+  }, [schedule, teamTimePrefs]);
+
+  const timePrefGrid = React.useMemo(() => {
+    // teamId -> week -> string[] (times)
+    const map = new Map<string, Map<number, string[]>>();
+
+    const push = (teamId: string, week: number, time: string) => {
+      if (!teamId || !week || !time) return;
+      if (!map.has(teamId)) map.set(teamId, new Map());
+      const byWeek = map.get(teamId)!;
+      if (!byWeek.has(week)) byWeek.set(week, []);
+      byWeek.get(week)!.push(time);
+    };
+
+    for (const m of schedule || []) {
+      if (!m || m.away === "BYE") continue;
+      const week = Number(m.week || 0);
+      const time = String(m.time || "").trim();
+      if (!week || !time) continue; // ignore unassigned
+      push(String(m.home || "").trim(), week, time);
+      push(String(m.away || "").trim(), week, time);
+    }
+
+    // Build team list: only teams that have any prefs
+    const teams = Object.entries(teamTimePrefs || {})
+      .filter(([_, cfg]) => {
+        const p = (cfg.preferred || []).length;
+        const n = (cfg.notPreferred || []).length;
+        const u = (cfg.unavailable || []).length;
+        return p + n + u > 0;
+      })
+      .map(([teamId]) => teamId)
+      .sort((a, b) => displayName(a).localeCompare(displayName(b)));
+
+    return { map, teams };
+  }, [schedule, teamTimePrefs, displayName]);
+
+  type TimePrefOutcome = "green" | "yellow" | "orange" | "red";
+
+  function evalWeekOutcome(
+    teamId: string,
+    times: string[]
+  ): {
+    outcome: TimePrefOutcome;
+    cls: string;
+    debug?: any;
+  } {
+    const cfg = teamTimePrefs?.[teamId] || {};
+
+    const preferred = new Set(
+      (cfg.preferred || []).map((t) => toHHMM(String(t).trim())).filter(Boolean)
+    );
+    const notPreferred = new Set(
+      (cfg.notPreferred || [])
+        .map((t) => toHHMM(String(t).trim()))
+        .filter(Boolean)
+    );
+    const unavailable = new Set(
+      (cfg.unavailable || [])
+        .map((t) => toHHMM(String(t).trim()))
+        .filter(Boolean)
+    );
+
+    const normTimes = (times || [])
+      .map((t) => toHHMM(String(t).trim()))
+      .filter(Boolean);
+
+    let hitPreferred = false;
+    let hitNotPreferred = false;
+    let hitUnavailable = false;
+
+    for (const t of normTimes) {
+      if (unavailable.has(t)) hitUnavailable = true;
+      else if (notPreferred.has(t)) hitNotPreferred = true;
+      else if (preferred.has(t)) hitPreferred = true;
+    }
+
+    // Priority: red > orange > green > yellow
+    let outcome: TimePrefOutcome = "yellow";
+    if (hitUnavailable) outcome = "red";
+    else if (hitNotPreferred) outcome = "orange";
+    else if (hitPreferred) outcome = "green";
+    else outcome = "yellow";
+
+    const cls =
+      outcome === "red"
+        ? "bg-red-200 text-red-900"
+        : outcome === "orange"
+        ? "bg-orange-200 text-orange-900"
+        : outcome === "green"
+        ? "bg-green-200 text-green-900"
+        : "bg-yellow-100 text-yellow-900";
+
+    return {
+      outcome,
+      cls,
+      debug: {
+        normTimes,
+        preferred: Array.from(preferred),
+        notPreferred: Array.from(notPreferred),
+        unavailable: Array.from(unavailable),
+        hitPreferred,
+        hitNotPreferred,
+        hitUnavailable,
+      },
+    };
+  }
+
+  const CHIP = {
+    preferred: "bg-blue-50 text-blue-900 border-blue-200",
+    notPreferred: "bg-purple-50 text-purple-900 border-purple-200", // or gray
+    unavailable: "bg-slate-100 text-slate-900 border-slate-300", // or bg-black/ text-white if you want harsh
+  } as const;
+
+  function plainChips(items: string[]) {
+    if (!items.length) return <span className="text-xs text-gray-400">—</span>;
+    return (
+      <div className="flex flex-wrap gap-1">
+        {items.map((t) => (
+          <span
+            key={t}
+            className="inline-flex items-center rounded-full border border-gray-300 bg-white px-2 py-0.5 text-[11px] font-mono text-gray-800"
+          >
+            {t}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-4 rounded-2xl border border-gray-200 overflow-hidden">
       <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between bg-white p-4 border-b border-gray-200">
@@ -861,6 +1078,18 @@ export function PreviewPanel(props: {
               title="How often teams repeat opponents"
             >
               Opponent variety
+            </button>
+
+            <button
+              className={`rounded-lg px-3 py-1 text-xs border ${
+                previewTab === "timeprefs"
+                  ? "bg-black text-white border-black"
+                  : "bg-white border-gray-300 hover:bg-gray-50"
+              }`}
+              onClick={() => setPreviewTab("timeprefs")}
+              title="Show clash groups and each group's games by week/time"
+            >
+              Time Prefs
             </button>
 
             {/* Net summary box */}
@@ -1226,7 +1455,6 @@ export function PreviewPanel(props: {
                                   bye: null,
                                 };
 
-                                // if no BYE this week
                                 if (!cell.bye) {
                                   return (
                                     <td
@@ -1240,7 +1468,6 @@ export function PreviewPanel(props: {
                                   );
                                 }
 
-                                // there IS a BYE team this week
                                 return (
                                   <td
                                     key={w}
@@ -1396,6 +1623,207 @@ export function PreviewPanel(props: {
             teamsByDivision={teamsByDivision}
             displayName={displayName}
           />
+        ) : previewTab === "timeprefs" ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
+                <div className="text-xs text-gray-600">Total preferences</div>
+                <div className="text-2xl font-semibold">
+                  {timePrefStats.totalPrefs}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
+                <div className="text-xs text-gray-600">
+                  Teams with preferences
+                </div>
+                <div className="text-2xl font-semibold">
+                  {timePrefStats.teamsWithPrefs}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
+                <div className="text-xs text-gray-600">Perfectly fulfilled</div>
+                <div className="text-2xl font-semibold">
+                  {timePrefStats.perfectTeams}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
+                <div className="text-xs text-gray-600">Preferred satisfied</div>
+                <div className="text-sm font-medium">
+                  {timePrefStats.preferredHit} / {timePrefStats.preferredTotal}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
+                <div className="text-xs text-gray-600">
+                  Not preferred avoided
+                </div>
+                <div className="text-sm font-medium">
+                  {timePrefStats.notPrefOk} / {timePrefStats.notPrefTotal}
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  violations: {timePrefStats.notPrefViol}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
+                <div className="text-xs text-gray-600">
+                  Unavailable respected
+                </div>
+                <div className="text-sm font-medium">
+                  {timePrefStats.unavailOk} / {timePrefStats.unavailTotal}
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  violations: {timePrefStats.unavailViol}
+                </div>
+              </div>
+            </div>
+
+            <div className="text-xs text-gray-500">
+              *Counts ignore unassigned games (no time). Preferred is satisfied
+              when the team is scheduled at that time at least once.
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1">
+                <span className="h-3 w-3 rounded bg-green-200 border border-green-300" />
+                Preferred met
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1">
+                <span className="h-3 w-3 rounded bg-yellow-100 border border-yellow-300" />
+                Neutral
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1">
+                <span className="h-3 w-3 rounded bg-orange-200 border border-orange-300" />
+                Not pref violated
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1">
+                <span className="h-3 w-3 rounded bg-red-200 border border-red-300" />
+                Unavailable violated
+              </span>
+            </div>
+
+            <div className="mt-4 overflow-auto rounded-xl border border-gray-200 bg-white">
+              <table className="min-w-[980px] w-full text-sm table-fixed">
+                <colgroup>
+                  <col style={{ width: 150 }} /> {/* Team */}
+                  <col style={{ width: 80 }} /> {/* Pref */}
+                  {visibleWeekCols.map((w, i) => (
+                    <col key={w ?? `empty-${i}`} style={{ width: 120 }} />
+                  ))}
+                </colgroup>
+
+                <thead className="sticky top-0 bg-white">
+                  <tr className="text-left text-xs text-gray-600 border-b border-gray-200">
+                    <th className="py-2 px-3">Team</th>
+                    <th className="py-2 px-3">Preferences</th>
+                    {visibleWeekCols.map((w, i) => (
+                      <th
+                        key={w ?? `empty-${i}`}
+                        className="py-2 px-3 font-mono tabular-nums"
+                      >
+                        {w ? `Week ${w}` : ""}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {timePrefGrid.teams.map((teamId) => (
+                    <tr
+                      key={teamId}
+                      className="border-t border-gray-100 align-top"
+                    >
+                      <td className="py-2 px-3">
+                        <div className="font-mono text-xs">{teamId}</div>
+                        <div className="text-xs text-gray-700">
+                          {displayName(teamId)}
+                        </div>
+                      </td>
+                      {(() => {
+                        const cfg = teamTimePrefs?.[teamId] || {};
+                        const preferred = (cfg.preferred || []).map(String);
+                        const notPreferred = (cfg.notPreferred || []).map(
+                          String
+                        );
+                        const unavailable = (cfg.unavailable || []).map(String);
+
+                        return (
+                          <>
+                            <td className="py-2 px-3">
+                              {plainChips(preferred)}
+                              {plainChips(notPreferred)}
+                              {plainChips(unavailable)}
+                            </td>
+                          </>
+                        );
+                      })()}
+
+                      {visibleWeekCols.map((w, i) => {
+                        if (!w) {
+                          return (
+                            <td
+                              key={`empty-${i}`}
+                              className="py-2 px-3 text-gray-200"
+                            >
+                              &nbsp;
+                            </td>
+                          );
+                        }
+
+                        const times =
+                          timePrefGrid.map.get(teamId)?.get(w) || [];
+                        if (!times.length) {
+                          return (
+                            <td
+                              key={w}
+                              className="py-2 px-3 text-gray-400 font-mono"
+                            >
+                              -
+                            </td>
+                          );
+                        }
+
+                        const s = evalWeekOutcome(teamId, times);
+
+                        return (
+                          <td key={w} className="py-2 px-3">
+                            <div className={`rounded-lg p-2 ${s.cls}`}>
+                              <div className="flex flex-col gap-1">
+                                {times.map((t, idx) => (
+                                  <div
+                                    key={t + ":" + idx}
+                                    className="rounded-md bg-white/40 px-2 py-1 text-xs font-mono"
+                                  >
+                                    {t}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+
+                  {!timePrefGrid.teams.length && (
+                    <tr>
+                      <td
+                        className="py-3 px-3 text-xs text-gray-500"
+                        colSpan={4 + visibleWeekCols.length}
+                      >
+                        No teams have time preferences yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         ) : (
           <ClashGroupsView
             weeks={Number(weeks)}

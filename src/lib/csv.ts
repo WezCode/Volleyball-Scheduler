@@ -6,8 +6,8 @@ export function downloadCsv(rows: any[], filename: string) {
         .map((v) => {
           const s = String(v ?? "");
           return s.includes(",") || s.includes('"') || s.includes("\n")
-            ? `"${s.replaceAll('"', '""')}"`
-            : s;
+          ? `"${s.replace(/"/g, '""')}"`
+          : s;
         })
         .join(",")
     )

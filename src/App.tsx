@@ -18,7 +18,7 @@ import {
   generatePairings,
   placeMatches,
 } from "./lib/scheduling";
-import type { Match } from "./lib/types";
+import type { Match, PreviewTabKey } from "./lib/types";
 import { Tabs } from "./ui/Tabs";
 import { ConfigPanel } from "./ui/ConfigPanel";
 import { TeamsPanel } from "./ui/TeamsPanel";
@@ -49,7 +49,7 @@ export default function App() {
       teamTimePrefs: Record<string, { preferred?: string[]; avoid?: string[] }>;
       schedule: Match[];
       mainTab?: "config" | "teams" | "preview";
-      previewTab?: "division" | "netheights" | "clashes";
+      previewTab?: PreviewTabKey;
     };
   };
 
@@ -286,9 +286,7 @@ export default function App() {
   ]);
 
   const [schedule, setSchedule] = useState<Match[]>([]);
-  const [previewTab, setPreviewTab] = useState<
-    "division" | "netheights" | "clashes" | "variety"
-  >("division");
+  const [previewTab, setPreviewTab] = useState<PreviewTabKey>("division");
   const [mainTab, setMainTab] = useState<"config" | "teams" | "preview">(
     "config"
   );
@@ -434,6 +432,7 @@ export default function App() {
               displayName={displayName}
               groupedByWeek={groupedByWeek}
               timeslots={parsedTimeslots}
+              teamTimePrefs={teamTimePrefs}
             />
           )}
 

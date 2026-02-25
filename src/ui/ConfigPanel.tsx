@@ -97,14 +97,30 @@ export function ConfigPanel(props: {
     const allowed = new Set(
       (timeslotsArr || []).map((t) => t.trim()).filter(Boolean)
     );
+
+    const BUCKETS: Array<keyof TeamTimePrefs[string]> = [
+      "preferred",
+      "notPreferred",
+      "unavailable",
+    ];
+
     setTeamTimePrefs((prev) => {
       const next: TeamTimePrefs = {};
+
       for (const [teamId, cfg] of Object.entries(prev || {})) {
-        const preferred = (cfg.preferred || []).filter((t) => allowed.has(t));
-        const avoid = (cfg.avoid || []).filter((t) => allowed.has(t));
-        if (preferred.length || avoid.length)
-          next[teamId] = { preferred, avoid };
+        const cleaned: Record<string, string[]> = {};
+
+        for (const b of BUCKETS) {
+          const arr = (cfg?.[b] || []).map((t) => t.trim()).filter(Boolean);
+          const pruned = arr.filter((t) => allowed.has(t));
+          if (pruned.length) cleaned[b] = pruned;
+        }
+
+        if (Object.keys(cleaned).length) {
+          next[teamId] = cleaned as TeamTimePrefs[string];
+        }
       }
+
       return next;
     });
   }, [timeslotsArr, setTeamTimePrefs]);
